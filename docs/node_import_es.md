@@ -1,0 +1,424 @@
+# `node_import_es` Technical Note
+
+## Purpose
+
+`node_import_es` stores every validated legal parent and child chunk in
+Elasticsearch.
+
+Elasticsearch is the authoritative text store in this RAG design:
+
+```text
+parent records
+    -> complete Article, recital group, or Annex context
+
+child records
+    -> small legally meaningful retrieval units
+
+Elasticsearch
+    -> stores both parent and child text
+    -> performs BM25 full-text retrieval
+    -> supports legal metadata filters
+```
+
+The node is located at:
+
+```text
+app/import_process/agent/nodes/node_import_es.py
+```
+
+## Position in the Import Workflow
+
+```text
+node_document_split
+    -> creates parent and child chunks
+
+node_key_terms_extraction
+    -> adds key_terms to child chunks
+
+node_import_es
+    -> stores all parent and child chunks in Elasticsearch
+
+node_bge_embedding
+    -> embeds searchable child chunks only
+```
+
+Elasticsearch runs before embedding so that the authoritative legal text is
+persisted independently from vector generation.
+
+## What Was Implemented
+
+- Added an asynchronous Elasticsearch import node.
+- Added shared `AsyncElasticsearch` client management.
+- Added automatic index creation.
+- Generated the Elasticsearch mapping from `configs/meta_config.yml`.
+- Generated `ESRecordInfo` dynamically from the same YAML schema.
+- Added record validation, defaults, allowed-value checks, and unknown-field
+  removal.
+- Added bounded bulk upserts.
+- Used `chunk_id` as the Elasticsearch document `_id`.
+- Added SHA-256 `document_hash` and `chunk_hash` metadata.
+- Added additive mapping updates for existing indexes.
+- Added stale-record deletion after successful replacement upserts.
+- Added bulk-response count and per-record failure detection.
+- Added task progress logging with `add_running_task` and `add_done_task`.
+- Added a manual GDPR integration example and isolated unit tests.
+
+## Input Contract
+
+The node reads:
+
+```python
+state["task_id"]
+state["chunks"]
+```
+
+`state["chunks"]` must be a non-empty list. Each item is expected to describe a
+parent, child, or `parent_child` legal record.
+
+Example child:
+
+```json
+{
+  "chunk_id": "gdpr:article_6:paragraph_1_points_d_f",
+  "parent_id": "gdpr:article_6",
+  "law_id": "gdpr",
+  "law_title": "General Data Protection Regulation",
+  "chapter_number": "II",
+  "chapter_title": "Principles",
+  "article_number": "6",
+  "article_title": "Lawfulness of processing",
+  "paragraph_start": "1(d)",
+  "paragraph_end": "1(f)",
+  "record_type": "child",
+  "content_type": "article",
+  "key_terms": [
+    "legitimate interests",
+    "data subject"
+  ],
+  "language": "en",
+  "status": "in_force",
+  "source_file": "General_Data_Protection_Regulation_GDPR.md",
+  "text": "Article 6 ... "
+}
+```
+
+## Output Contract
+
+On success, the node returns a partial graph-state update:
+
+```python
+{
+    "es_import_success": True,
+    "es_imported_count": success_count,
+    "es_deleted_stale_count": deleted_stale_count,
+    "es_index_name": repository.index_name,
+    "es_import_error": "",
+}
+```
+
+LangGraph merges this dictionary into the workflow state.
+
+The node does not return the full `state` because it only needs to update the
+Elasticsearch-related fields.
+
+## Execution Steps
+
+### 1. Read task information
+
+```python
+task_id = state.get("task_id", "unknown")
+chunks = state.get("chunks", [])
+```
+
+The task ID connects logs and progress information to one upload or batch
+import.
+
+### 2. Mark the node as running
+
+```python
+add_running_task(task_id, function_name)
+```
+
+This allows the upload API status endpoint to show that Elasticsearch import is
+currently running.
+
+### 3. Validate that chunks exist
+
+```python
+if not chunks:
+    raise ValueError(...)
+```
+
+An empty import is treated as a pipeline error. Silently reporting success
+would incorrectly suggest that the law was stored.
+
+### 4. Initialize the shared asynchronous client
+
+```python
+es_client_manager.init()
+client = es_client_manager.get_client()
+```
+
+`init()` is idempotent. It creates one reusable `AsyncElasticsearch` client and
+connection pool for the process.
+
+The node does not close the client after each request. The application closes
+it once during shutdown:
+
+```python
+await es_client_manager.close()
+```
+
+The standalone manual test closes the client in `finally` because that test
+owns the entire event-loop lifecycle.
+
+### 5. Create the repository
+
+```python
+repository = ESRepository(
+    client=es_client_manager.get_client(),
+    index_name=es_config.index_name,
+)
+```
+
+The repository is the persistence boundary. The graph node coordinates state;
+the repository owns Elasticsearch-specific behavior.
+
+### 6. Ensure that the index exists
+
+```python
+await repository.ensure_index()
+```
+
+If the configured index does not exist, the repository creates it with:
+
+```python
+{
+    "dynamic": False,
+    "properties": ...
+}
+```
+
+`dynamic: false` prevents accidental extra chunk fields from becoming new
+Elasticsearch mapping fields.
+
+The field mappings are generated by:
+
+```python
+meta_config.build_es_mapping()
+```
+
+from:
+
+```text
+configs/meta_config.yml -> es_meta
+```
+
+### 7. Validate and bulk-upsert records
+
+```python
+success_count = await repository.bulk_upsert(chunks)
+```
+
+For every chunk:
+
+```text
+raw chunk
+    -> ESRecordInfo.from_chunk(...)
+    -> YAML validation/default handling
+    -> exact Elasticsearch document
+    -> bulk index operation
+```
+
+The bulk request uses:
+
+```python
+"_id": document["chunk_id"]
+```
+
+This makes ingestion idempotent:
+
+```text
+first import  -> creates chunk document
+second import -> replaces the same chunk_id
+```
+
+After all current records are upserted, the repository deletes records with
+the same `law_id` whose IDs are absent from the new import. This prevents old
+paragraphs from remaining searchable after an amended document produces fewer
+or different chunks.
+
+It does not create duplicate records for the same stable chunk ID.
+
+### 8. Verify the Elasticsearch response
+
+The repository checks:
+
+- the response item count equals the request batch count;
+- each item has a successful `2xx` status;
+- no item contains an Elasticsearch error.
+
+Any failed items are collected and raised as `ESBulkIndexError`.
+
+The index is refreshed once after successful batches so newly imported chunks
+become searchable immediately.
+
+### 9. Mark completion
+
+```python
+add_done_task(task_id, function_name)
+```
+
+This removes the node from the running list and adds it to the completed list.
+
+## YAML-Generated Record Model
+
+`ESRecordInfo` is not manually duplicated field by field. It is dynamically
+created in:
+
+```text
+app/entities/es_record.py
+```
+
+using:
+
+```python
+ESRecordInfo = create_model(
+    "ESRecordInfo",
+    ...fields loaded from meta_config.es_meta
+)
+```
+
+This produces one source of truth:
+
+```text
+configs/meta_config.yml
+    -> MetaConfig
+    -> ESRecordInfo fields
+    -> Elasticsearch mapping
+    -> runtime validation
+```
+
+When a field is added to `es_meta`, the generated model and new index mapping
+can use it without manually editing a static `ESRecord` class.
+
+Important behavior:
+
+- required fields must exist;
+- configured defaults are inserted;
+- allowed values are checked;
+- runtime Python types are checked;
+- fields not defined for Elasticsearch are removed when converting a chunk;
+- generated models forbid unknown fields after conversion.
+
+## BM25 Retrieval Design
+
+The repository also provides:
+
+```python
+await repository.search(keyword, limit=20)
+```
+
+It uses an Elasticsearch `multi_match` query over fields marked
+`searchable: true`.
+
+Boosts come from `meta_config.yml`, for example:
+
+```text
+article_number^4
+article_title^4
+key_terms^2.5
+law_title^2
+text
+```
+
+This gives exact legal headings and extracted terms more influence while
+keeping the authoritative text searchable.
+
+## Configuration
+
+Environment variables:
+
+```env
+ES_URL=http://127.0.0.1:9200
+ES_INDEX_NAME=eu_data_laws
+```
+
+Loaded by:
+
+```text
+app/config/es_config.py
+```
+
+Schema and search behavior are configured in:
+
+```text
+configs/meta_config.yml -> es_meta
+```
+
+## Failure Behavior
+
+The node logs and re-raises exceptions:
+
+```python
+except Exception:
+    logger.exception(...)
+    raise
+```
+
+Re-raising is important because LangGraph and the outer import service must
+know that the document was not fully persisted.
+
+Typical failures:
+
+- `state["chunks"]` is empty;
+- a required YAML field is missing;
+- a field has an invalid type or allowed value;
+- Elasticsearch is unavailable;
+- the index mapping conflicts with the requested document;
+- one or more bulk operations fail;
+- the bulk response count is inconsistent.
+
+## Important Operational Notes
+
+### Existing mappings are not automatically migrated
+
+`ensure_index()` only creates an absent index. If `meta_config.yml` changes
+after the index already exists, Elasticsearch does not automatically rewrite
+the existing mapping.
+
+For incompatible changes, use an index migration or create a versioned index
+and reindex the documents.
+
+### Stable IDs are essential
+
+Because `chunk_id` is the Elasticsearch `_id`, changing the chunk-ID algorithm
+can leave old documents in the index. A clean rebuild or deletion strategy is
+needed after such a change.
+
+### Parent and child text remain authoritative
+
+Key terms improve retrieval, but answer generation should cite and rely on the
+original `text`, not treat generated terms as legal evidence.
+
+## Testing
+
+Run the isolated unit tests:
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python -m unittest \
+  app.test.test_node_import_es
+```
+
+Run the manual integration example:
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python -m \
+  app.import_process.agent.nodes.node_import_es
+```
+
+The manual test requires:
+
+- the configured Elasticsearch service;
+- the GDPR Markdown example;
+- LLM configuration because key-term extraction runs first.

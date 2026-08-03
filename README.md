@@ -21,21 +21,9 @@ Data Governance Act, Open Data Directive, and related digital regulations.
 
 ## Architecture
 
-```text
-Legal documents
-  -> structure-aware splitting
-  -> key-term extraction
-  -> Elasticsearch text/BM25 index
-  -> BGE embeddings
-  -> Milvus vector index
 
-User policy
-  -> intent and query rewriting
-  -> BM25 + semantic retrieval
-  -> RRF and cross-encoder reranking
-  -> evidence-quality check
-  -> grounded answer with sources
-```
+![Lex-Legal_Architecture.jpg](docs/Lex-Legal_Architecture.jpg)
+
 
 ## Run the Application
 
