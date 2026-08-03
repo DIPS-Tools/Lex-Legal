@@ -1,0 +1,72 @@
+<div class="home-page">
+  <section class="hero section-shell">
+    <div class="hero-copy">
+      <p class="eyebrow">AI-assisted legal research</p>
+      <h1>
+        Your assistant for
+        <span>legal compliance.</span>
+      </h1>
+      <p class="hero-lead">
+        Search your regulatory knowledge base, compare legal provisions, and
+        turn complex EU legislation into clear, traceable guidance.
+      </p>
+      <div class="hero-actions">
+        <RouterLink class="button button-primary" to="/legal-compliance">
+          Open Legal Query
+          <span aria-hidden="true">→</span>
+        </RouterLink>
+        <RouterLink class="button button-quiet" to="/import">
+          Import documents
+        </RouterLink>
+      </div>
+    </div>
+
+    <div class="hero-visual" aria-hidden="true">
+      <div class="hero-orbit orbit-large" />
+      <div class="hero-orbit orbit-small" />
+      <div class="hero-core">
+        <svg viewBox="0 0 36 36">
+          <path d="M10 8h16M18 8v20M8 14h20M10 14l-4 8h8l-4-8Zm16 0-4 8h8l-4-8Z" />
+        </svg>
+      </div>
+      <span class="hero-topic topic-one">GDPR</span>
+      <span class="hero-topic topic-two">EU Data Act</span>
+      <span class="hero-topic topic-three">EU AI Act</span>
+    </div>
+  </section>
+
+  <section class="capabilities">
+    <div class="section-shell">
+      <header class="section-heading">
+        <div>
+          <p class="eyebrow">One legal workspace</p>
+          <h2>Research with the right context</h2>
+        </div>
+        <p>
+          LexGuard keeps retrieval focused on legally meaningful text while
+          making the reasoning workflow visible.
+        </p>
+      </header>
+
+      <div class="capability-grid">
+        <article v-for="capability in capabilities" :key="capability.number">
+          <span class="capability-number">{{ capability.number }}</span>
+          <h3>{{ capability.title }}</h3>
+          <p>{{ capability.text }}</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="closing-cta section-shell">
+    <div>
+      <p class="eyebrow">Legal knowledge, ready to query</p>
+      <h2>Start with a compliance question.</h2>
+      <p>Retrieve the relevant passage, inspect the workflow, and verify the answer.</p>
+    </div>
+    <RouterLink class="button button-light" to="/legal-compliance">
+      Start a conversation
+      <span aria-hidden="true">→</span>
+    </RouterLink>
+  </section>
+</div>

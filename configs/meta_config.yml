@@ -1,0 +1,318 @@
+version: "1.1"
+
+# Elasticsearch stores the authoritative parent/child text
+# and supports BM25 retrieval.
+es_meta:
+  - name: chunk_id
+    description: Stable identifier shared by Elasticsearch and Milvus
+    data_type: keyword
+    example: "gdpr:article_6:paragraph_1_point_f"
+    required: true
+    searchable: false
+    filterable: true
+    sortable: true
+
+  - name: parent_id
+    description: Identifier of the parent article or recital group
+    data_type: keyword
+    example: "gdpr:article_6"
+    required: true
+    searchable: false
+    filterable: true
+
+  - name: law_id
+    description: Canonical law identifier
+    data_type: keyword
+    example: "gdpr"
+    required: true
+    searchable: true
+    filterable: true
+    aggregatable: true
+
+  - name: law_title
+    description: Human-readable title of the law
+    data_type: text
+    example: "General Data Protection Regulation"
+    required: true
+    searchable: true
+    keyword_subfield: true
+    boost: 2.0
+
+  - name: chapter_number
+    description: Chapter number containing the provision
+    data_type: keyword
+    example: "II"
+    required: false
+    searchable: false
+    filterable: true
+
+  - name: chapter_title
+    description: Chapter heading containing the provision
+    data_type: text
+    example: "Principles"
+    required: false
+    searchable: true
+    keyword_subfield: true
+    boost: 2.0
+
+  - name: article_number
+    description: Article number containing the provision
+    data_type: keyword
+    example: "6"
+    required: false
+    searchable: true
+    filterable: true
+    boost: 4.0
+
+  - name: article_title
+    description: Article heading
+    data_type: text
+    example: "Lawfulness of processing"
+    required: false
+    searchable: true
+    keyword_subfield: true
+    boost: 4.0
+
+  - name: paragraph_start
+    description: First paragraph or point represented by the chunk
+    data_type: keyword
+    example: "1(d)"
+    required: false
+    searchable: true
+    filterable: true
+
+  - name: paragraph_end
+    description: Last paragraph or point represented by the chunk
+    data_type: keyword
+    example: "1(f)"
+    required: false
+    searchable: true
+    filterable: true
+
+  - name: record_type
+    description: Indicates whether the record is a parent, child, or both
+    data_type: keyword
+    example: "child"
+    required: true
+    default: child
+    allowed_values:
+      - parent
+      - child
+      - parent_child
+    searchable: false
+    filterable: true
+
+  - name: content_type
+    description: Legal unit type represented by the record
+    data_type: keyword
+    example: "article"
+    required: true
+    default: article
+    searchable: false
+    filterable: true
+
+  - name: key_terms
+    description: Source-grounded legal keywords or short phrases extracted from the chunk text
+    data_type: text_array
+    example:
+      - "legitimate interests"
+      - "controller"
+      - "data subject"
+      - "fundamental rights and freedoms"
+    required: false
+    default: []
+    searchable: true
+    filterable: true
+    keyword_subfield: true
+    boost: 2.5
+
+  - name: language
+    description: Language code of the legal text
+    data_type: keyword
+    example: "en"
+    required: true
+    default: en
+    searchable: false
+    filterable: true
+
+  - name: status
+    description: Legal status of the document version or provision
+    data_type: keyword
+    example: "in_force"
+    required: true
+    default: in_force
+    allowed_values:
+      - in_force
+      - amended
+      - repealed
+      - draft
+    searchable: false
+    filterable: true
+
+  - name: source_file
+    description: Path, URI, or identifier of the original Markdown source
+    data_type: keyword
+    example: "documents/gdpr/gdpr_en_cleaned.md"
+    required: false
+    searchable: false
+    filterable: true
+
+  - name: document_hash
+    description: SHA-256 fingerprint of the normalized authoritative Markdown document
+    data_type: keyword
+    example: "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"
+    required: false
+    searchable: false
+    filterable: true
+    aggregatable: true
+
+  - name: chunk_hash
+    description: SHA-256 fingerprint of the chunk identity, structure, and authoritative text
+    data_type: keyword
+    example: "3f786850e387550fdab836ed7e6dc881de23001b3f786850e387550fdab836ed"
+    required: false
+    searchable: false
+    filterable: true
+
+  - name: text
+    description: Authoritative parent or child legal text
+    data_type: text
+    example: "Processing shall be lawful only if and to the extent that at least one of the following applies..."
+    required: true
+    searchable: true
+    boost: 1.0
+
+
+# Milvus stores child embeddings and metadata needed for filtering.
+milvus_meta:
+  - name: chunk_id
+    description: Stable identifier shared by Elasticsearch and Milvus
+    data_type: VARCHAR
+    example: "gdpr:article_6:paragraph_1_point_f"
+    required: true
+    primary_key: true
+    max_length: 256
+    filterable: true
+
+  - name: parent_id
+    description: Identifier used to retrieve the parent record from Elasticsearch
+    data_type: VARCHAR
+    example: "gdpr:article_6"
+    required: true
+    max_length: 256
+    filterable: true
+
+  - name: law_id
+    description: Canonical identifier of the law
+    data_type: VARCHAR
+    example: "gdpr"
+    required: true
+    max_length: 64
+    filterable: true
+
+  - name: chapter_number
+    description: Chapter number containing the child chunk
+    data_type: VARCHAR
+    example: "II"
+    required: false
+    max_length: 32
+    filterable: true
+
+  - name: article_number
+    description: Article number containing the child chunk
+    data_type: VARCHAR
+    example: "6"
+    required: false
+    max_length: 32
+    filterable: true
+
+  - name: record_type
+    description: Record type used for dense-vector retrieval
+    data_type: VARCHAR
+    example: "child"
+    required: true
+    default: child
+    allowed_values:
+      - parent
+      - child
+      - parent_child
+    max_length: 32
+    filterable: true
+
+  - name: content_type
+    description: Legal unit type represented by the child chunk
+    data_type: VARCHAR
+    example: "article"
+    required: true
+    default: article
+    max_length: 32
+    filterable: true
+
+  - name: key_terms
+    description: Optional source-grounded key terms used for Milvus filtering
+    data_type: ARRAY_VARCHAR
+    example:
+      - "legitimate interests"
+      - "controller"
+      - "data subject"
+    required: false
+    default: []
+    max_capacity: 32
+    max_length: 128
+    filterable: true
+
+  - name: language
+    description: Language code of the child text
+    data_type: VARCHAR
+    example: "en"
+    required: true
+    default: en
+    max_length: 16
+    filterable: true
+
+  - name: status
+    description: Legal status used to filter obsolete or draft provisions
+    data_type: VARCHAR
+    example: "in_force"
+    required: true
+    default: in_force
+    allowed_values:
+      - in_force
+      - amended
+      - repealed
+      - draft
+    max_length: 32
+    filterable: true
+
+  - name: document_hash
+    description: SHA-256 fingerprint shared by every child from the same document version
+    data_type: VARCHAR
+    example: "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"
+    required: false
+    max_length: 64
+    filterable: true
+
+  - name: chunk_hash
+    description: SHA-256 fingerprint of the child identity, structure, and authoritative text
+    data_type: VARCHAR
+    example: "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7c9ecb4bf5122ff"
+    required: false
+    max_length: 64
+    filterable: true
+
+  - name: dense_vector
+    description: Dense embedding generated from the child text and structural headings
+    data_type: FLOAT_VECTOR
+    example:
+      - 0.0124
+      - -0.0318
+      - 0.0841
+      - 0.0067
+    required: true
+    # bge-base-en-v1.5 uses 768. Set EMBEDDING_DIMENSION=1024 for BGE-M3.
+    dimension: ${oc.env:EMBEDDING_DIMENSION,768}
+    metric_type: COSINE # using Cosine to do similarly computation
+    index_type: HNSW   #  which one index is used? HNSW
+    index_params:
+      M: 16 # how many neighbours for one node
+      efConstruction: 200

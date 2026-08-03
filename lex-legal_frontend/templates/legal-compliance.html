@@ -1,0 +1,195 @@
+<div class="query-page section-shell">
+  <aside class="query-sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-mark" aria-hidden="true">§</div>
+      <div>
+        <strong>LexGuard</strong>
+        <span>Legal intelligence</span>
+      </div>
+    </div>
+
+    <button
+      class="new-conversation-button"
+      type="button"
+      @click="startNewConversation"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+      <span>New conversation</span>
+    </button>
+
+    <div class="sidebar-navigation">
+      <span class="sidebar-label">Chats</span>
+      <RouterLink class="sidebar-nav-item active" to="/legal-compliance">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5.5 4v-4.25A2.5 2.5 0 0 1 4 13.5z" />
+        </svg>
+        <span>Legal assistant</span>
+      </RouterLink>
+      <RouterLink class="sidebar-nav-item" to="/import">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 6.5h6l2 2H20.5v10h-17z" />
+        </svg>
+        <span>Knowledge import</span>
+      </RouterLink>
+      <RouterLink class="sidebar-nav-item" to="/legal-query-monitor">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 19V9m6 10V5m6 14v-7m4 7H2" />
+        </svg>
+        <span>Query monitor</span>
+      </RouterLink>
+    </div>
+
+    <div class="sidebar-capability-card">
+      <span>Research workflow</span>
+      <strong>Hybrid legal retrieval</strong>
+      <p>
+        Searches your legal index, reranks evidence, and falls back to
+        authoritative web sources when needed.
+      </p>
+      <div class="research-dots" aria-label="Research services ready">
+        <i />
+        <i />
+        <i />
+        <small>Ready</small>
+      </div>
+    </div>
+
+    <div class="sidebar-footer" :title="sessionId">
+      <i />
+      <span>Session active</span>
+    </div>
+  </aside>
+
+  <section class="chat-workspace">
+    <header class="workspace-header">
+      <div>
+        <span class="workspace-kicker">Legal Query</span>
+        <h2>Compliance assistant</h2>
+      </div>
+      <label class="stream-control">
+        <input v-model="streamingEnabled" type="checkbox" />
+        <span />
+        Stream response
+      </label>
+    </header>
+
+    <div class="message-list" aria-live="polite">
+      <div v-if="historyLoading" class="empty-chat">
+        <span class="loading-ring" />
+        <p>Loading conversation history…</p>
+      </div>
+
+      <div v-else-if="messages.length === 0" class="empty-chat">
+        <div class="empty-mark">§</div>
+        <h3>What would you like to establish?</h3>
+        <p>
+          Ask about an obligation, lawful basis, definition, or relationship
+          between provisions. Your answer will include the retrieval workflow.
+        </p>
+      </div>
+
+      <article
+        v-for="message in renderedMessages"
+        :key="message.id"
+        class="message-row"
+        :class="message.role"
+      >
+        <div class="message-avatar">{{ message.role === 'user' ? 'You' : 'LG' }}</div>
+        <div class="message-body">
+          <div class="message-meta">
+            <strong>{{ message.role === 'user' ? 'You' : 'LexGuard' }}</strong>
+            <span>{{ formatTime(message.timestamp) }}</span>
+          </div>
+          <div v-if="message.role === 'user'" class="message-copy">
+            {{ message.content }}
+          </div>
+          <div v-else class="message-copy assistant-copy">
+            <div v-if="message.error" class="message-error">
+              {{ message.error }}
+            </div>
+            <details
+              v-if="message.progress"
+              class="retrieval-progress"
+              :open="message.pending"
+            >
+              <summary>
+                <span>
+                  {{ message.pending ? 'Research in progress' : 'Research trace' }}
+                </span>
+                <small>
+                  {{ message.progress.done.length }} stages completed
+                </small>
+              </summary>
+              <ul>
+                <li
+                  v-for="stage in message.progress.done"
+                  :key="`done-${stage}`"
+                  class="done"
+                >
+                  <i>✓</i>{{ stage }}
+                </li>
+                <li
+                  v-for="stage in message.progress.running"
+                  :key="`running-${stage}`"
+                  class="running"
+                >
+                  <i />
+                  {{ stage }}
+                </li>
+              </ul>
+            </details>
+
+            <div v-if="message.content" class="markdown" v-html="message.html" />
+            <div v-else-if="message.pending" class="thinking">
+              <span />
+              <span />
+              <span />
+              Researching legal sources
+            </div>
+
+            <div v-if="message.imageUrls?.length" class="answer-images">
+              <a
+                v-for="imageUrl in message.imageUrls"
+                :key="imageUrl"
+                :href="imageUrl"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <img :src="imageUrl" alt="Referenced legal document figure" />
+              </a>
+            </div>
+          </div>
+        </div>
+      </article>
+      <div ref="chatEnd" />
+    </div>
+
+    <footer class="composer">
+      <textarea
+        ref="textarea"
+        v-model="queryText"
+        rows="1"
+        placeholder="Ask a legal compliance question…"
+        :disabled="sending"
+        @input="resizeTextarea"
+        @keydown="handleComposerKeydown"
+      />
+      <button
+        type="button"
+        aria-label="Send legal query"
+        :disabled="sending || !queryText.trim()"
+        @click="sendQuery()"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m4 4 16 8-16 8 3-8-3-8Zm3 8h13" />
+        </svg>
+      </button>
+      <p>
+        Enter to send · Shift + Enter for a new line · Verify important legal
+        conclusions against the cited source text.
+      </p>
+    </footer>
+  </section>
+</div>

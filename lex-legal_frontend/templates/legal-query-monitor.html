@@ -1,0 +1,152 @@
+<div class="monitor-page section-shell">
+  <section class="monitor-heading">
+    <div>
+      <p class="eyebrow">Operational visibility</p>
+      <h1>Legal query monitor</h1>
+      <p>
+        Review query activity initiated from this browser, including latency,
+        retrieval stages, answer size, and failures.
+      </p>
+    </div>
+    <div class="monitor-actions">
+      <label>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m16 16 4 4" />
+        </svg>
+        <input v-model="filter" placeholder="Filter query or session" />
+      </label>
+      <button type="button" @click="refresh">Refresh</button>
+      <button type="button" class="danger" @click="clearRecords">Clear</button>
+    </div>
+  </section>
+
+  <section class="metric-grid">
+    <article>
+      <span>Total queries</span>
+      <strong>{{ records.length }}</strong>
+      <small>this browser</small>
+    </article>
+    <article>
+      <span>Completed</span>
+      <strong>{{ completed }}</strong>
+      <small>{{ successRate }}% success rate</small>
+    </article>
+    <article>
+      <span>Processing</span>
+      <strong>{{ processing }}</strong>
+      <small>active sessions</small>
+    </article>
+    <article>
+      <span>Failed</span>
+      <strong>{{ failed }}</strong>
+      <small>requires review</small>
+    </article>
+    <article>
+      <span>P95 latency</span>
+      <strong>{{ formatLatency(p95Latency) }}</strong>
+      <small>settled queries</small>
+    </article>
+  </section>
+
+  <section class="monitor-content">
+    <div class="query-table-wrap">
+      <table class="query-table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Question</th>
+            <th>Latency</th>
+            <th>Trace</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="record in filteredRecords"
+            :key="record.id"
+            :class="{ selected: selected?.id === record.id }"
+            @click="selected = record"
+          >
+            <td>
+              <span class="status-label" :class="record.status">
+                {{ record.status }}
+              </span>
+            </td>
+            <td>
+              <strong>{{ record.query }}</strong>
+              <code>{{ record.sessionId }}</code>
+            </td>
+            <td>{{ formatLatency(record.latencyMs) }}</td>
+            <td>
+              {{ record.doneStages.length }} done ·
+              {{ record.runningStages.length }} running
+            </td>
+            <td>{{ formatDate(record.updatedAt) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-if="filteredRecords.length === 0" class="table-empty">
+        <span>∅</span>
+        <h3>No query activity yet</h3>
+        <p>Run a legal query to populate this monitor.</p>
+      </div>
+    </div>
+
+    <aside class="query-inspector">
+      <template v-if="selected">
+        <div class="inspector-heading">
+          <span>Query detail</span>
+          <button type="button" @click="selected = null">×</button>
+        </div>
+        <h2>{{ selected.query }}</h2>
+        <dl>
+          <div>
+            <dt>Session</dt>
+            <dd><code>{{ selected.sessionId }}</code></dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>{{ selected.status }}</dd>
+          </div>
+          <div>
+            <dt>Answer length</dt>
+            <dd>{{ selected.answerLength }} characters</dd>
+          </div>
+          <div>
+            <dt>Started</dt>
+            <dd>{{ formatDate(selected.startedAt) }}</dd>
+          </div>
+        </dl>
+        <div class="trace-list">
+          <span>Retrieval trace</span>
+          <ul>
+            <li v-for="stage in selected.doneStages" :key="stage">
+              <i>✓</i>{{ stage }}
+            </li>
+            <li
+              v-for="stage in selected.runningStages"
+              :key="stage"
+              class="running"
+            >
+              <i />{{ stage }}
+            </li>
+          </ul>
+        </div>
+        <p v-if="selected.error" class="inspector-error">
+          {{ selected.error }}
+        </p>
+      </template>
+      <div v-else class="inspector-empty">
+        <span>↖</span>
+        <p>Select a query to inspect its retrieval trace.</p>
+      </div>
+    </aside>
+  </section>
+
+  <p class="monitor-note">
+    This monitor uses browser-local activity because the query API currently
+    exposes health, query, stream, and history endpoints—but no server-wide
+    monitoring endpoint.
+  </p>
+</div>

@@ -1,0 +1,86 @@
+import copy
+from typing import Literal
+
+from typing_extensions import TypedDict
+
+
+class QueryGraphState(TypedDict):
+    """
+    Shared state passed through the legal-document query workflow.
+
+    Parallel retrieval nodes must return partial dictionaries and update only
+    their own result field. For example, the semantic node writes
+    ``semantic_searched_chunks`` while the Elasticsearch node writes
+    ``keywords_searched_chunks``. This prevents concurrent LangGraph branches
+    from attempting to update the same state key.
+    """
+    session_id: str
+    original_query: str
+
+    # Search planning and retrieval results.
+    search_type: Literal[
+        "semantic_search",
+        "es_keywords_search",
+        "hybrid_search",
+    ]
+    semantic_searched_chunks: list
+    keywords_searched_chunks: list
+    network_searched_docs: list
+
+    # Fusion, reranking, and fallback decisions.
+    rrf_chunks: list
+    reranked_docs: list
+    retrieval_is_sufficient: bool
+    retrieval_failure_reason: str
+    # • network_fallback_used records whether the workflow has already tried an external web search.
+    #
+    # - False: Web search has not run, so weak local results can trigger it.
+    # - True: Web search has already run, so the graph must proceed to answer output even if evidence remains weak
+    #
+    network_fallback_used: bool
+
+    # Answer generation and presentation.
+    answer: str
+    image_urls: list[str]
+
+    # Supporting query information.
+    query_key_terms: list[str]
+    rewritten_query: str
+    history: list
+    is_stream: bool
+
+
+# ========================
+# 默认状态（全部为空）
+# ========================
+query_graph_default_state: QueryGraphState = {
+    "session_id": "",
+    "original_query": "",
+    "semantic_searched_chunks": [],
+    "keywords_searched_chunks": [],
+    "network_searched_docs": [],
+    "search_type": "hybrid_search",
+    "rrf_chunks": [],
+    "reranked_docs": [],
+    "retrieval_is_sufficient": False,
+    "retrieval_failure_reason": "",
+    "network_fallback_used": False,
+    "answer": "",
+    "image_urls": [],
+    "query_key_terms": [],
+    "rewritten_query": "",
+    "history": [],
+    "is_stream": False
+}
+
+
+# ========================
+# 创建默认状态（可覆盖）
+# ========================
+def create_query_default_state(**overrides) -> QueryGraphState:
+    """
+    创建查询流程的默认状态，支持覆盖字段
+    """
+    state = copy.deepcopy(query_graph_default_state)
+    state.update(overrides)
+    return state
