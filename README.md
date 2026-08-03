@@ -9,8 +9,7 @@ Data Governance Act, Open Data Directive, and related digital regulations.
 - Splits legal Markdown into traceable Articles, paragraphs, points, recitals,
   and parent-child records.
 - Extracts legal key terms and generates BGE dense embeddings.
-- Stores authoritative legal text in Elasticsearch and child vectors in
-  Milvus.
+- Stores authoritative legal text in Elasticsearch and child vectors in Milvus.
 - Combines Elasticsearch BM25 and Milvus semantic retrieval using RRF and a
   BGE cross-encoder reranker.
 - Applies a retrieval-quality gate and performs one Tavily MCP web fallback
