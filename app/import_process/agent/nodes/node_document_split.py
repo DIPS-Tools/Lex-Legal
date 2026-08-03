@@ -29,7 +29,7 @@ The node runs four explicit steps:
         |     Add a shared document hash and one structural hash per chunk.
         |
         |-- step_5_backup_chunks
-        |     Save the final records as chunks.json for inspection.
+        |     Save the final records as a timestamped chunks_*.json backup.
         |
         v
     state["chunks"] -> key-term extraction -> Elasticsearch / Milvus
@@ -85,7 +85,7 @@ TINY_PARAGRAPH_MAX_TOKENS = 60
 TINY_PARAGRAPH_GROUP_MAX_TOKENS = 250
 TINY_PARAGRAPH_GROUP_MAX_BLOCKS = 3
 
-# Recital parents may contain up to ten individual recital children.
+# Recital parents may contain up to five individual recital children.
 RECITAL_GROUP_SIZE = 5
 
 
@@ -1277,7 +1277,7 @@ def step_4_add_content_hashes(
 
 def step_5_backup_chunks(state: ImportGraphState, sections: list[dict[str, Any]]) -> None:
     """
-    Persist validated chunks as ``chunks.json`` for inspection and debugging.
+    Persist validated chunks as a timestamped ``chunks_*.json`` backup.
 
     This is an intermediate artifact. Downstream nodes continue using the
     in-memory ``state["chunks"]`` list.

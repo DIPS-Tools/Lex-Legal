@@ -82,7 +82,7 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False) -> Chat
         logger.info(f"llm configs: model: {llm_config.llm_model} -- url: {llm_config.base_url}")
 
         if bool(llm_config.local_flag):
-            logger.info(f"load local model {llm_config.local_flag}")
+            logger.info(f"load local model: {llm_config.local_flag}")
             return create_ollama_llm(model= target_model, url=llm_config.base_url, temperature=llm_config.llm_temperature)
 
         llm_client = ChatOpenAI(

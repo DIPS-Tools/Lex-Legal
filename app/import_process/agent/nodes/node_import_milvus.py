@@ -147,7 +147,8 @@ async def test_import_milvus_example() -> None:
         )
 
     # The splitter reads ``md_path`` because ``md_content`` starts empty,
-    # writes ``chunks.json``, and places generated records in state["chunks"].
+    # writes a timestamped ``chunks_*.json`` backup, and places generated
+    # records in state["chunks"].
     test_state: ImportGraphState = {
         "task_id": "test_milvus_import",
         "md_path": test_md_path,

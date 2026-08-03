@@ -186,7 +186,8 @@ async def test_embedding_example() -> None:
         raise FileNotFoundError(f"GDPR test Markdown does not exist: {test_md_path}")
 
     # The splitter reads ``md_path`` because ``md_content`` starts empty, writes
-    # ``chunks.json``, and places generated records in state["chunks"].
+    # a timestamped ``chunks_*.json`` backup, and places generated records in
+    # state["chunks"].
     test_state: ImportGraphState = {
         "task_id": "test_key_terms_extraction",
         "md_path": test_md_path,

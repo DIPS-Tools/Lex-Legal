@@ -272,7 +272,8 @@ async def import_document(
     Process one document and convert all exceptions into a report result.
 
     Each document receives a unique task directory for generated Markdown,
-    extracted images, ``chunks.json``, and ``chunks_with_keywords.json``.
+    extracted images, timestamped ``chunks_*.json`` backups, and
+    ``chunks_with_keywords.json``.
     The original source file remains untouched.
     """
     task_id = str(uuid.uuid4())

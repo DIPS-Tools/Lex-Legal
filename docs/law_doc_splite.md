@@ -19,7 +19,8 @@ annexes -> annex parent + paragraph children
 - Uses the full Article as the parent record.
 - Uses numbered paragraphs, definition groups, or lettered point groups as child records.
 - Keeps `chunk_id` and `parent_id` stable for Elasticsearch/Milvus sharing.
-- Writes generated chunks to `chunks.json` in `state["local_dir"]` for inspection.
+- Writes generated chunks to a timestamped `chunks_*.json` file in
+  `state["local_dir"]` for inspection.
 
 ## Node Pipeline
 
@@ -39,7 +40,7 @@ step_4_add_content_hashes
   -> add one SHA-256 document hash and a structural hash for every chunk
 
 step_5_backup_chunks
-  -> write chunks.json for inspection
+  -> write a timestamped chunks_*.json backup for inspection
 ```
 
 `step_3_refine_chunks` intentionally does not do generic fixed-size re-splitting. The legal split has already happened in `step_2_split_law_document`; re-splitting at this stage could break a legal sentence, paragraph, or point group.

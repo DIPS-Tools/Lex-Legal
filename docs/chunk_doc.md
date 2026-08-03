@@ -3,7 +3,7 @@
 
 - Parent: one complete Article, recital group, or Annex.
 - Article child: one numbered paragraph by default.
-- Tiny plain paragraphs may be combined only when each is at most 80 estimated
+- Tiny plain paragraphs may be combined only when each is at most 60 estimated
   tokens, with at most three paragraphs and 250 estimated tokens per group.
 - Definitions remain individual children.
 - A paragraph is split at lettered points only when it exceeds 550 estimated
@@ -138,10 +138,10 @@ remain at or below 550 tokens.
 An individual point together with the repeated governing introduction can still
 exceed 550 tokens. Such an indivisible legal point remains whole.
 
-### `TINY_PARAGRAPH_MAX_TOKENS = 80`
+### `TINY_PARAGRAPH_MAX_TOKENS = 60`
 
 This controls which ordinary numbered paragraphs are eligible for conservative
-adjacent grouping. Each paragraph must contain at most 80 estimated tokens and
+adjacent grouping. Each paragraph must contain at most 60 estimated tokens and
 must not contain lettered points.
 
 Example:
@@ -153,7 +153,7 @@ paragraph 3: 35 tokens -> eligible
 paragraph 4: 120 tokens -> not eligible; it remains standalone
 ```
 
-A 90-token paragraph is not grouped merely because it is adjacent to a
+A 70-token paragraph is not grouped merely because it is adjacent to a
 20-token paragraph.
 
 ### `TINY_PARAGRAPH_GROUP_MAX_TOKENS = 250`
@@ -164,10 +164,10 @@ at or below 250 estimated body tokens.
 Example:
 
 ```text
-paragraph 1: 70 tokens
-paragraph 2: 75 tokens
-paragraph 3: 65 tokens
-combined: 210 tokens -> allowed
+paragraph 1: 50 tokens
+paragraph 2: 55 tokens
+paragraph 3: 45 tokens
+combined: 150 tokens -> allowed
 ```
 
 This produces a compact child rather than trying to reach the general 512-token
@@ -192,32 +192,35 @@ inside one apparently small chunk.
 All three tiny-paragraph conditions must be satisfied:
 
 ```text
-each paragraph <= 80 tokens
+each paragraph <= 60 tokens
 combined group <= 250 tokens
 number of paragraphs <= 3
 ```
 
-### `RECITAL_GROUP_SIZE = 10`
+### `RECITAL_GROUP_SIZE = 5`
 
 Recitals use a different parent-child arrangement:
 
 - each individual recital is a child retrieval unit;
-- up to ten adjacent recitals are collected into one recital-group parent.
+- up to five adjacent recitals are collected into one recital-group parent.
 
-Example with 18 short recitals:
+Example with 12 short recitals:
 
 ```text
-parent 1 = recitals 1-10
-  children = recital 1, recital 2, ..., recital 10
+parent 1 = recitals 1-5
+  children = recital 1, recital 2, ..., recital 5
 
-parent 2 = recitals 11-18
-  children = recital 11, recital 12, ..., recital 18
+parent 2 = recitals 6-10
+  children = recital 6, recital 7, ..., recital 10
+
+parent 3 = recitals 11-12
+  children = recital 11, recital 12
 ```
 
-The ten-recital limit is a maximum rather than a required size. Recital parent
+The five-recital limit is a maximum rather than a required size. Recital parent
 groups are also emitted around 700 estimated tokens and are prevented from
 accepting another recital above 1,000 estimated tokens. Therefore a group may
-contain fewer than ten recitals when the recitals are long.
+contain fewer than five recitals when the recitals are long.
 
 ## How the settings interact
 
