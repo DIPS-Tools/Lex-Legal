@@ -50,6 +50,8 @@ import json
 import os
 import re
 import sys
+import time
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -63,21 +65,28 @@ from app.utils.content_hash import (
 from app.utils.task_utils import add_running_task, add_done_task
 
 
-# Desired child size after grouping adjacent legal blocks. Reaching this value
-# causes the current group to be emitted, but it never cuts inside a block.
+# Desired size for unnumbered fallback content such as Annex paragraphs. Article
+# children do not attempt to reach this size: their legal structure comes first.
 CHILD_TARGET_TOKENS = 512
 
-# Before adding another complete block, avoid creating a group above this size.
-# One indivisible legal block may still exceed this value because preserving its
-# legal meaning is more important than enforcing an artificial text boundary.
+# Generic unnumbered/Annex grouping stops before adding another complete block
+# above this size. One indivisible block may still exceed the limit.
 CHILD_HARD_MAX_TOKENS = 700
 
-# Article 4-style definitions are grouped in small, predictable ranges such as
-# definitions (1)-(5), (6)-(10), and so on.
-DEFINITION_GROUP_SIZE = 5
+# Prefer smaller point groups because the governing paragraph introduction is
+# repeated in every resulting child. Paragraphs at or below the maximum remain
+# intact even when they contain many lettered points.
+POINT_GROUP_TARGET_TOKENS = 400
+POINT_GROUP_MAX_TOKENS = 550
+
+# Ordinary paragraphs are children by default. Only consecutive, plain, very
+# short paragraphs are combined, and then only into a compact retrieval unit.
+TINY_PARAGRAPH_MAX_TOKENS = 60
+TINY_PARAGRAPH_GROUP_MAX_TOKENS = 250
+TINY_PARAGRAPH_GROUP_MAX_BLOCKS = 3
 
 # Recital parents may contain up to ten individual recital children.
-RECITAL_GROUP_SIZE = 10
+RECITAL_GROUP_SIZE = 5
 
 
 @dataclass
@@ -91,6 +100,7 @@ class NumberedBlock:
 
     label: str
     text: str
+    unit_type: str = "paragraph"
 
 
 @dataclass
@@ -435,7 +445,12 @@ def _parse_numbered_blocks(lines: list[str], pattern: re.Pattern[str]) -> list[N
 
     for line in lines:
         stripped = line.strip()
-        match = pattern.match(stripped)
+        # PDF-to-Markdown conversion sometimes promotes a legal paragraph to a
+        # heading (for example, ``## 2. Paragraph 1 shall ...``). Match against
+        # the legal text after removing Markdown syntax so that such paragraphs
+        # are not lost or absorbed into the preceding unit.
+        legal_line = _strip_heading(stripped)
+        match = pattern.match(legal_line)
         if match:
             # A new marker closes the previous numbered block.
             if current_label and current_lines:
@@ -443,7 +458,7 @@ def _parse_numbered_blocks(lines: list[str], pattern: re.Pattern[str]) -> list[N
 
             # Begin the new block with its marker line included in the text.
             current_label = match.group("label")
-            current_lines = [line]
+            current_lines = [legal_line]
         elif current_label:
             # Blank lines, continuation sentences, and lettered points remain
             # attached to the current numbered paragraph/definition.
@@ -467,8 +482,8 @@ def _split_paragraph_by_points(block: NumberedBlock) -> list[NumberedBlock]:
         (a) the data subject has given consent;
         (b) processing is necessary for a contract;
 
-    The introductory sentence is called the preamble here. It is kept with the
-    first point group because those points depend on it for their meaning.
+    The introductory sentence is called the preamble here. It is repeated in
+    every point group because all of the points depend on it for their meaning.
     """
     lines = block.text.split("\n")
 
@@ -481,13 +496,14 @@ def _split_paragraph_by_points(block: NumberedBlock) -> list[NumberedBlock]:
     current_lines: list[str] = []
 
     for line in lines:
-        match = LETTER_POINT_RE.match(line.strip())
+        legal_line = _strip_heading(line.strip())
+        match = LETTER_POINT_RE.match(legal_line)
         if match:
             # Starting a new point closes the preceding point.
             if current_point and current_lines:
                 point_blocks.append(NumberedBlock(f"{block.label}({current_point})", _clean_text("\n".join(current_lines))))
             current_point = match.group("label").lower()
-            current_lines = [line]
+            current_lines = [legal_line]
         elif current_point:
             # Continuation lines remain part of the active lettered point.
             current_lines.append(line)
@@ -508,27 +524,27 @@ def _split_paragraph_by_points(block: NumberedBlock) -> list[NumberedBlock]:
     split_blocks: list[NumberedBlock] = []
     group: list[NumberedBlock] = []
 
-    # A maximum of three points produces useful legal ranges such as (a)-(c).
-    max_points_per_group = 3
-
     for point in point_blocks:
-        # Include the preamble when estimating the first group's size because it
-        # will be stored as part of that group's text.
-        candidate_text = _join_block_text(group + [point], preamble if not group else "")
-        if group and (
-            len(group) >= max_points_per_group
-            or _token_count(candidate_text) > CHILD_HARD_MAX_TOKENS
-        ):
+        # The governing sentence is present in every emitted group, so include
+        # it in every size estimate as well.
+        candidate_text = _join_block_text(group + [point], preamble)
+        if group and _token_count(candidate_text) > POINT_GROUP_MAX_TOKENS:
             # Emit the existing group before the new point makes it too large.
-            # Only the first emitted group receives the paragraph preamble.
-            split_blocks.append(_point_group_to_block(block.label, group, preamble if not split_blocks else ""))
+            split_blocks.append(_point_group_to_block(block.label, group, preamble))
             group = [point]
         else:
             group.append(point)
 
+        # Once a useful retrieval size is reached, close this semantic point
+        # range rather than packing it up to the maximum and leaving a tiny tail
+        # whenever the source offers more points.
+        if _token_count(_join_block_text(group, preamble)) >= POINT_GROUP_TARGET_TOKENS:
+            split_blocks.append(_point_group_to_block(block.label, group, preamble))
+            group = []
+
     # Emit the final partial point group.
     if group:
-        split_blocks.append(_point_group_to_block(block.label, group, preamble if not split_blocks else ""))
+        split_blocks.append(_point_group_to_block(block.label, group, preamble))
 
     return split_blocks
 
@@ -541,9 +557,9 @@ def _point_group_to_block(paragraph_label: str, points: list[NumberedBlock], pre
     end_point = points[-1].label.split("(", 1)[1].rstrip(")")
     label = f"{paragraph_label}({start_point})" if start_point == end_point else f"{paragraph_label}({start_point})-{paragraph_label}({end_point})"
 
-    # The preamble is optional and normally appears only in the first group.
+    # The preamble is optional and is deliberately repeated in every group.
     text = _join_block_text(points, preamble)
-    return NumberedBlock(label, text)
+    return NumberedBlock(label, text, unit_type="point_range")
 
 
 def _join_block_text(blocks: list[NumberedBlock], prefix: str = "") -> str:
@@ -622,6 +638,60 @@ def _group_blocks(
     return [group for group in groups if group]
 
 
+def _is_tiny_plain_paragraph(block: NumberedBlock) -> bool:
+    """Return whether a paragraph is safe for conservative adjacent grouping."""
+    if block.unit_type != "paragraph" or not block.label.isdigit():
+        return False
+    if _token_count(block.text) > TINY_PARAGRAPH_MAX_TOKENS:
+        return False
+
+    # A short governing sentence with lettered points is still a structured
+    # legal unit and must not be merged with a later numbered paragraph.
+    return not any(
+        LETTER_POINT_RE.match(_strip_heading(line.strip()))
+        for line in block.text.split("\n")
+    )
+
+
+def _group_article_paragraphs(
+    blocks: list[NumberedBlock],
+) -> list[list[NumberedBlock]]:
+    """
+    Keep numbered paragraphs separate except for compact runs of tiny text.
+
+    This is deliberately stricter than ``_group_blocks``. Article paragraphs
+    commonly state independent rights, duties, exceptions, and remedies, so a
+    512-token target must not combine them merely because they are adjacent.
+    Point ranges and normal-sized paragraphs are always standalone children.
+    """
+    groups: list[list[NumberedBlock]] = []
+    tiny_group: list[NumberedBlock] = []
+
+    def flush_tiny_group() -> None:
+        if tiny_group:
+            groups.append(list(tiny_group))
+            tiny_group.clear()
+
+    for block in blocks:
+        if not _is_tiny_plain_paragraph(block):
+            flush_tiny_group()
+            groups.append([block])
+            continue
+
+        candidate = tiny_group + [block]
+        if tiny_group and (
+            len(candidate) > TINY_PARAGRAPH_GROUP_MAX_BLOCKS
+            or _token_count(_join_block_text(candidate))
+            > TINY_PARAGRAPH_GROUP_MAX_TOKENS
+        ):
+            flush_tiny_group()
+
+        tiny_group.append(block)
+
+    flush_tiny_group()
+    return groups
+
+
 def _fallback_text_blocks(text: str) -> list[NumberedBlock]:
     """
     Create synthetic blocks when no legal numbering can be recognized.
@@ -654,12 +724,13 @@ def _make_article_records(
 
     Child splitting priority:
 
-    1. Definition Articles use parenthesized definitions such as ``(1)``.
-    2. Normal Articles use numbered paragraphs such as ``1.``.
+    1. Definition Articles use one child per parenthesized definition.
+    2. Normal Articles use one child per numbered paragraph by default.
     3. Some source formats use ``(1)`` for normal Article paragraphs, so that
        pattern is attempted as a compatibility fallback.
     4. Unnumbered text falls back to blank-line-separated blocks.
-    5. Long paragraphs with lettered points are divided into point groups.
+    5. Only oversized paragraphs are divided into lettered-point groups.
+    6. Consecutive plain paragraphs may be grouped only when each is tiny.
     """
     records: list[ChunkRecord] = []
 
@@ -695,6 +766,7 @@ def _make_article_records(
 
     # Parse the numbering convention most appropriate to this Article type.
     blocks = _parse_numbered_blocks(body_lines, PAREN_NUMBER_RE if content_type == "definition" else NUMBERED_PARAGRAPH_RE)
+    used_fallback_blocks = False
 
     # Compatibility fallback for documents that format ordinary paragraphs as
     # ``(1)`` rather than ``1.``.
@@ -704,34 +776,40 @@ def _make_article_records(
     # Last-resort structural fallback for short or unnumbered Articles.
     if not blocks:
         blocks = _fallback_text_blocks(body)
+        used_fallback_blocks = True
 
     # ``expanded_blocks`` may contain original numbered paragraphs or smaller
     # point ranges produced from unusually long/multi-point paragraphs.
     expanded_blocks: list[NumberedBlock] = []
     for block in blocks:
-        # More than three lettered points is enough to create multiple meaningful
-        # child ranges such as (a)-(c) and (d)-(f).
-        has_multiple_points = len([
-            line
+        has_lettered_points = any(
+            LETTER_POINT_RE.match(_strip_heading(line.strip()))
             for line in block.text.split("\n")
-            if LETTER_POINT_RE.match(line.strip())
-        ]) > 3
+        )
 
-        # Definition entries should remain definition units. Normal Article
-        # paragraphs may be split at explicit lettered-point boundaries when
-        # either complexity or size requires it.
-        if content_type != "definition" and (
-            has_multiple_points
-            or _token_count(block.text) > CHILD_HARD_MAX_TOKENS
+        # Definitions remain individual terms. A normal paragraph is split only
+        # when it exceeds the point-group limit and offers explicit boundaries.
+        if (
+            content_type != "definition"
+            and has_lettered_points
+            and _token_count(block.text) > POINT_GROUP_MAX_TOKENS
         ):
             expanded_blocks.extend(_split_paragraph_by_points(block))
         else:
             expanded_blocks.append(block)
 
-    # Definition chunks have an additional limit of five entries. Normal Article
-    # chunks are governed by semantic boundaries and token limits only.
-    max_blocks = DEFINITION_GROUP_SIZE if content_type == "definition" else None
-    for group in _group_blocks(expanded_blocks, max_blocks=max_blocks):
+    if content_type == "definition":
+        # A definition is normally queried by its term, so unrelated neighboring
+        # definitions should not dilute its embedding.
+        groups = [[block] for block in expanded_blocks]
+    elif used_fallback_blocks:
+        # Unnumbered prose lacks authoritative paragraph labels; retain the
+        # general complete-block grouping behavior for this fallback only.
+        groups = _group_blocks(expanded_blocks)
+    else:
+        groups = _group_article_paragraphs(expanded_blocks)
+
+    for group in groups:
         # Range metadata identifies the first and last legal units represented by
         # this child, including endpoints from a pre-grouped point range.
         start = _normalise_group_label(group[0].label, first=True)
@@ -867,7 +945,13 @@ def _make_annex_records(context: LegalContext, annex_title: str, annex_body: str
 
     return records
 
+def get_current_time():
+    current_time = time.time()
+    formatted_time = datetime.fromtimestamp(current_time).strftime(
+        "%Y-%m-%d-%H-%M-%S"
+    )
 
+    return formatted_time
 def step_2_split_law_document(md_content: str, context: LegalContext) -> list[ChunkRecord]:
     """
     Parse one Markdown law document and create structure-aware RAG records.
@@ -1203,7 +1287,8 @@ def step_5_backup_chunks(state: ImportGraphState, sections: list[dict[str, Any]]
 
     # Repeated imports and pre-existing output directories are both supported.
     os.makedirs(local_dir, exist_ok=True)
-    backup_file_path = os.path.join(local_dir, "chunks.json")
+
+    backup_file_path = os.path.join(local_dir, "chunks_" + str(get_current_time())+ ".json")
 
     # Preserve non-ASCII legal names and use indentation for manual review.
     with open(backup_file_path, "w", encoding="utf-8") as f:

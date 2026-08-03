@@ -1,5 +1,7 @@
 # Environment configuration and dependency imports.
 import os
+
+from langchain_ollama import ChatOllama
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.exceptions import LangChainException
@@ -12,6 +14,22 @@ from app.core.logger import logger
 # Global cache: key is (model name, JSON output mode), value is a ChatOpenAI instance.
 # Purpose: avoid repeated client initialization, improve performance, and manage instances consistently.
 _llm_client_cache = {}
+
+
+def create_ollama_llm(model, url, temperature) -> ChatOllama:
+    """
+    Create a reusable ChatOllama model connected to the locally
+    deployed Ollama server.
+    """
+    return ChatOllama(
+        model=model,
+        base_url=url,
+        temperature=temperature,
+        validate_model_on_init=True,
+    )
+
+
+
 
 
 def get_llm_client(model: Optional[str] = None, json_mode: bool = False) -> ChatOpenAI:
@@ -41,7 +59,8 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False) -> Chat
 
     # 3. Validate required API configuration early and fail with clear errors.
     if not llm_config.api_key:
-        raise ValueError("[LLM Client] Missing configuration: set OPENAI_API_KEY in .env.")
+        if not llm_config.local_flag:
+            raise ValueError("[LLM Client] Missing configuration: set OPENAI_API_KEY in .env.")
     if not llm_config.base_url:
         raise ValueError("[LLM Client] Missing configuration: set OPENAI_API_BASE in .env.")
     logger.info(f"[LLM Client] Initializing new instance: model={target_model}, json_mode={json_mode}")
@@ -60,6 +79,12 @@ def get_llm_client(model: Optional[str] = None, json_mode: bool = False) -> Chat
 
     # 5. Initialize the client and convert LangChain wrapper errors into clearer messages.
     try:
+        logger.info(f"llm configs: model: {llm_config.llm_model} -- url: {llm_config.base_url}")
+
+        if bool(llm_config.local_flag):
+            logger.info(f"load local model {llm_config.local_flag}")
+            return create_ollama_llm(model= target_model, url=llm_config.base_url, temperature=llm_config.llm_temperature)
+
         llm_client = ChatOpenAI(
             model=target_model,  # Target model name.
             temperature=llm_config.llm_temperature or 0.1,  # Low temperature keeps output more deterministic (0 to 1).

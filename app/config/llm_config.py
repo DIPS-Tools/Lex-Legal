@@ -11,6 +11,10 @@ load_dotenv()
 # 定义minerU服务配置
 @dataclass
 class LLMConfig:
+    local_flag: bool
+    base_url: str
+    api_key: str
+    lv_model: str
     base_url: str
     api_key : str
     lv_model: str
@@ -22,7 +26,8 @@ llm_config = LLMConfig(
     api_key=os.getenv("OPENAI_API_KEY"),
     lv_model=os.getenv("VL_MODEL"),
     llm_model=os.getenv("OPENAI_MODEL_NAME"),
-    llm_temperature=float(os.getenv("LLM_DEFAULT_TEMPERATURE"))
+    llm_temperature=float(os.getenv("LLM_DEFAULT_TEMPERATURE")),
+    local_flag = bool(os.getenv("LOCAL_MODEL"))
 )
 
 # print(llm_config)

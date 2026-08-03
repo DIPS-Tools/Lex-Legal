@@ -586,5 +586,6 @@ if __name__ == "__main__":
   
   
   python -m app.scripts.build_rag_knowledge_base ./doc/laws  --output-dir ./output/laws_build
+  python -m app.scripts.build_rag_knowledge_base ./low_doc/law  --output-dir ./output/laws_build
   
 """
