@@ -4,15 +4,15 @@ import uuid
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, END, START
 from app.core.logger import logger
-from app.import_process.agent.state import ImportGraphState, create_default_state
-from app.import_process.agent.nodes.node_entry import node_entry  # 入口节点：初始化参数、校验输入
-from app.import_process.agent.nodes.node_pdf_to_md import node_pdf_to_md  # PDF转MD：解析PDF文件为markdown格式
-from app.import_process.agent.nodes.node_md_img_process import node_md_img  # MD图片处理：提取/下载markdown中的图片、修复图片路径
-from app.import_process.agent.nodes.node_document_split import node_document_split  # 文档分块：将长文档切分为符合模型要求的小片段
-from app.import_process.agent.nodes.node_key_terms_extraction import node_key_terms_extraction  # 项目名识别：从分块中提取核心项目名称（业务定制化）
-from app.import_process.agent.nodes.node_bge_embedding import node_bge_embedding  # BGE向量化：将文本分块转换为向量表示（适配Milvus向量库）
+from app.import_process.agent.state import ImportGraphState, create_default_state # state config
+from app.import_process.agent.nodes.node_entry import node_entry  # Entry node: Initialize parameters, validate input.
+from app.import_process.agent.nodes.node_pdf_to_md import node_pdf_to_md  # PDF to MD: Convert PDF files to Markdown format.
+from app.import_process.agent.nodes.node_md_img_process import node_md_img  # Markdown Image Processing: Extract/download images from Markdown and fix image paths.
+from app.import_process.agent.nodes.node_document_split import node_document_split  # document chunk
+from app.import_process.agent.nodes.node_key_terms_extraction import node_key_terms_extraction  # extract the keywords (also said law meaningful words)
+from app.import_process.agent.nodes.node_bge_embedding import node_bge_embedding  # using BGE doing embedding
 from app.import_process.agent.nodes.node_import_es import node_import_es
-from app.import_process.agent.nodes.node_import_milvus import node_import_milvus  # 导入Milvus：将向量数据写入Milvus向量数据库
+from app.import_process.agent.nodes.node_import_milvus import node_import_milvus  # import the embedding to Milvus
 from app.utils import draw_mermaid_png
 
 load_dotenv()
@@ -70,7 +70,7 @@ kb_import_app = workflow.compile()
 
 from app.utils.draw_mermaid_png import draw_mermaid_png
 
-draw_mermaid_png(kb_import_app)
+draw_mermaid_png(kb_import_app, "main_import")
 
 if __name__ == "__main__":
     from app.utils.path_util import PROJECT_ROOT

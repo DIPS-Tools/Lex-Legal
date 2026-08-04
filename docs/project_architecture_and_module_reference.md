@@ -646,7 +646,7 @@ be overridden with `VITE_QUERY_API_BASE_URL` and
 | `answer_out.prompt` | Answer node: grounded legal analysis from evidence and history |
 | `image_summary.prompt` | Markdown image node: contextual image description |
 | `hyde_prompt.prompt` | HyDE experiment; not part of the active query graph |
-| `item_name_recognition.prompt` | Earlier item-name workflow support; not in the active graph |
+| `key_term_extraction.prompt` | Earlier item-name workflow support; not in the active graph |
 | `product_recognition_system.prompt` | Empty placeholder |
 
 Key-term extraction currently embeds its system instructions directly in

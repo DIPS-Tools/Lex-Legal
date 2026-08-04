@@ -9,61 +9,71 @@ from app.utils.task_utils import add_running_task, add_done_task
 
 def node_entry(state: ImportGraphState) -> ImportGraphState:
     """
-        节点: 入口节点 (node_entry)
-        为什么叫这个名字: 作为图的 Entry Point，负责接收外部输入并决定流程走向。
-        设计的state: local_file_path [ is_read_md_enabled is_read_pdf_enabled ] md_path pdf_path file_title
-        未来要实现:
-           1.进入节点的日志输出 【节点 + 核心参数】
-             记录任务状态 【哪个任务开始了】 -》 给前端推送信息 （埋点）
-           2. 参数校验 （local_file_path -> 没有传入文件 -> end  / local_dir -> 没有传入输出文件夹 -> 创建一个临时）
-           3. 解析文件类型，修改state对应的参数 local_file_path -> md | pdf
-              -> is_md_read_enabled True  ||   is_pdf_read_enabled True
-              -> md_path = local_file_path | pdf_path = local_file_path
-              -> file_tile = 读取文件名
-           4.结束节点的日志输出 【节点 + 核心参数】
-             记录任务状态 【哪个任务结束了】 -》 给前端推送信息 （埋点）
+    Entry point for the document-import graph.
+
+    This node receives the graph's external input, validates the source file,
+    and initializes the state fields used to route subsequent processing.
+
+    Relevant state fields:
+        local_file_path: Path of the document supplied by the caller, i.e., the file is needed to import.
+        is_md_read_enabled: Enables the Markdown-reading branch.
+        is_pdf_read_enabled: Enables the PDF-reading branch.
+        md_path: Source path passed to the Markdown reader.
+        pdf_path: Source path passed to the PDF reader.
+        file_title: Source filename without its final extension.
+
+    Workflow:
+        1. Log the node input and mark the task as running.
+        2. Ensure that ``local_file_path`` is present.
+        3. Select the Markdown or PDF branch and populate its path according to is_md_read_enabled.
+        4. Derive a fallback document title from the source filename.
+        5. Log the resulting state and mark the task as complete.
+
+    Future validation may also create a temporary output directory when the
+    caller does not supply one.
 
     """
-    # 1. 进入节点的日志输出 【节点 + 核心参数】 记录任务状态（给前端推送信息）
+    # Record entry into this node so the task status can be sent to the UI.
     function_name = sys._getframe().f_code.co_name
 
     logger.info(f">>> [{function_name}]Execution has begun! Current status: {state}")
 
     add_running_task(state['task_id'], function_name)
 
-    # 2. 进行必要的非空校验判定
+    # Stop processing when no source file was supplied.
+    #
     local_file_path = state['local_file_path']
     if not local_file_path:
         logger.error(f"[{function_name}]The check revealed no input file; parsing cannot proceed！！")
-        # directly return the state
+        # Return the unchanged state and let the graph determine the next step.
         return state
 
-    # 3. 判定并且完成state属性赋值
+    # Select the appropriate reader and populate its source-path state.
     if local_file_path.endswith(".md"):
-        # 处理md
+        # Route Markdown documents to the Markdown reader.
         state['is_md_read_enabled'] = True
         state['md_path'] = local_file_path
     elif local_file_path.endswith(".pdf"):
-        # 处理pdf
+        # Route PDF documents to the PDF reader.
         state['is_pdf_read_enabled'] = True
         state['pdf_path'] = local_file_path
     else:
         logger.error(f"[{function_name}]The file format is not MD or PDF; parsing cannot proceed！！")
 
-    # 提取file_title  /xx/xxx/aaaa.pdf ->  aaa -> 为了后期大模型没有识别出来当前文件对应item_name -> file_title进行兜底
-    #                               aaaa.pdf
-    # os.path
-    # aa.bb.tar.gz
+    # Derive a fallback title for cases where the model cannot identify the
+    # document's item_name. For example, /xx/xxx/aaaa.pdf becomes "aaaa".
+    # Path.stem removes only the final suffix, so aa.bb.tar.gz becomes
+    # "aa.bb.tar".
 
-    # get the file name
+    # Legacy os.path-based extraction; retained for compatibility/reference.
     file_title_os = os.path.basename(local_file_path).split(".")[0]
 
-    # get the file name (another way)
-    file_title = Path(local_file_path).stem # 去掉后缀的文件名  .name  .suffix
+    # Use pathlib to extract the filename without its final suffix.
+    file_title = Path(local_file_path).stem
     state['file_title'] = file_title
 
 
-    # 4. 结束节点的日志输出 【节点 + 核心参数】 记录任务状态（给前端推送信息）
+    # Record node completion and make the updated task status available to the UI.
     logger.info(f">>> [{function_name}]The start has ended! The current status is: {state}")
     add_done_task(state['task_id'], function_name)
 

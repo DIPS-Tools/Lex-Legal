@@ -54,3 +54,16 @@ python -m app.scripts.build_rag_knowledge_base ./doc/laws \
   --output-dir ./output/laws_build
 ```
 
+## Run with Docker
+
+The development Compose stack starts the query API on port 8008, import API on
+port 8007, and Vue/Vite frontend on port 5176:
+
+```bash
+docker network inspect dips-local >/dev/null 2>&1 \
+  || docker network create dips-local
+docker compose up --build
+```
+
+See [docs/docker.md](docs/docker.md) for endpoint configuration, service URLs,
+and production considerations.

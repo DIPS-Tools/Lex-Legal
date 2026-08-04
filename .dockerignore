@@ -1,0 +1,17 @@
+.git
+.agents
+.ai
+.codex
+.idea
+.venv
+__pycache__
+*.py[cod]
+*.log
+.env
+logs
+output
+lex-legal_frontend/node_modules
+lex-legal_frontend/dist
+docs
+tests
+app/test

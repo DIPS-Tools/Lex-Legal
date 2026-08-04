@@ -1,0 +1,114 @@
+services:
+  # Legal query API and SSE endpoint.
+  lexlegal-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8008:8008"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      PYTHONPATH: /app
+      PROJECT_ROOT: /app
+      WATCHFILES_FORCE_POLLING: "true"
+    container_name: lexlegal-api-local
+    init: true
+    restart: unless-stopped
+    networks:
+      - dips-local
+    command:
+      - uvicorn
+      - app.api.query_server:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8008"
+      - --reload
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # PDF/Markdown knowledge-base import API.
+  lexlegal-import:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8007:8007"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      PYTHONPATH: /app
+      PROJECT_ROOT: /app
+      WATCHFILES_FORCE_POLLING: "true"
+    container_name: lexlegal-import-local
+    init: true
+    restart: unless-stopped
+    networks:
+      - dips-local
+    command:
+      - uvicorn
+      - app.api.import_server:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8007"
+      - --reload
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Vue/Vite development web interface.
+  lexlegal-web:
+    build:
+      context: ./lex-legal_frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5176:5176"
+    volumes:
+      - ./lex-legal_frontend:/app
+      - /app/node_modules
+    depends_on:
+      lexlegal-api:
+        condition: service_healthy
+      lexlegal-import:
+        condition: service_healthy
+    container_name: lexlegal-web-local
+    init: true
+    restart: unless-stopped
+    networks:
+      - dips-local
+    command:
+      - npm
+      - run
+      - dev
+      - --
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5176"
+
+# The backend databases/model services can join this pre-existing local
+# network. Create it once with: docker network create dips-local
+networks:
+  dips-local:
+    external: true

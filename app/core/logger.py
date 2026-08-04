@@ -1,15 +1,20 @@
 """
-项目日志工具类
-基于loguru实现，支持.env配置控制台/文件双输出，自动生成logs/app_年月日.log
-特性：
-1. 配置驱动：通过.env开关输出、修改日志级别
-2. 自动路径：文件日志默认输出到 项目根/logs/app_YYYYMMDD.log
-3. 自动清理：按配置保留日志，自动删除过期文件
-4. 中文友好：utf-8编码，彻底解决中文乱码
-5. 异步安全：开启异步入队，支持多线程/异步场景，避免日志错乱
-6. 开箱即用：项目所有模块直接导入logger即可使用
-7. 位置终极精准：穿透loguru内部+工具类自身，完美显示业务模块实际调用位置
+Project logging utility.
+
+Implemented with Loguru. Console and file output are controlled through
+``.env`` settings, and daily log files are generated as
+``logs/app_YYYYMMDD.log``.
+
+Features:
+1. Configuration-driven output and log levels through ``.env``.
+2. Automatic file path: ``<project-root>/logs/app_YYYYMMDD.log``.
+3. Automatic cleanup of expired logs according to the retention setting.
+4. UTF-8 encoding for reliable multilingual log output.
+5. Queue-based logging suitable for multithreaded and asynchronous execution.
+6. Ready for use by importing ``logger`` from any project module.
+7. Accurate caller locations by skipping Loguru and this utility's own frames.
 """
+
 import sys
 import inspect
 from pathlib import Path
@@ -18,23 +23,23 @@ from dotenv import load_dotenv
 from loguru import logger
 
 
-# -------------------------- 第一步：加载.env配置文件 --------------------------
+# Step 1: Load configuration from .env.
 load_dotenv()
 
-# -------------------------- 第二步：读取.env配置（带默认值，防止配置缺失） --------------------------
+# Step 2: Read logging settings, using defaults when values are absent.
 LOG_CONSOLE_ENABLE = os.getenv("LOG_CONSOLE_ENABLE", "True").lower() == "true"
 LOG_CONSOLE_LEVEL = os.getenv("LOG_CONSOLE_LEVEL", "INFO").upper()
 LOG_FILE_ENABLE = os.getenv("LOG_FILE_ENABLE", "True").lower() == "true"
 LOG_FILE_LEVEL = os.getenv("LOG_FILE_LEVEL", "INFO").upper()
 LOG_FILE_RETENTION = os.getenv("LOG_FILE_RETENTION", "7 days")
 
-# -------------------------- 第三步：定义日志路径（自动推导项目根） --------------------------
+# Step 3: Define log paths by deriving the project root automatically.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FILE_NAME = "app_{time:YYYYMMDD}.log"
 LOG_FILE_PATH = LOG_DIR / LOG_FILE_NAME
 
-# -------------------------- 第四步：定义日志格式（彩色、结构化、易读） --------------------------
+# Step 4: Define a colored, structured, readable log format.
 LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
     "<level>{level: <8}</level> | "
@@ -42,20 +47,20 @@ LOG_FORMAT = (
     "<level>{message}</level>"
 )
 
-# -------------------------- 第五步：初始化日志配置（核心方法） --------------------------
+# Step 5: Initialize the logging configuration.
 def init_logger():
     """
-    初始化全局日志配置
-    1. 移除loguru默认控制台输出（避免重复打印）
-    2. 根据.env配置开启/关闭控制台输出
-    3. 根据.env配置开启/关闭文件输出（自动创建logs文件夹）
-    4. 配置日志格式、级别、分割、保留策略
-    :return: 配置完成的loguru logger实例
+    Initialize and return the global Loguru logger.
+
+    1. Remove Loguru's default console sink to prevent duplicate output.
+    2. Enable or disable console output according to ``.env``.
+    3. Enable or disable file output and create ``logs/`` when required.
+    4. Configure formatting, levels, daily rotation, and retention.
     """
-    # 1. 移除loguru默认的控制台输出
+    # Remove Loguru's default console sink.
     logger.remove()
 
-    # 2. 配置控制台输出（若.env开启）
+    # Add console output when enabled through .env.
     if LOG_CONSOLE_ENABLE:
         logger.add(
             sink=sys.stdout,
@@ -65,7 +70,7 @@ def init_logger():
             enqueue=True
         )
 
-    # 3. 配置文件输出（若.env开启）
+    # Add daily file output when enabled through .env.
     if LOG_FILE_ENABLE:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         logger.add(
@@ -82,16 +87,16 @@ def init_logger():
 
     return logger
 
-# -------------------------- 第六步：初始化并终极修正全局logger --------------------------
+# Step 6: Initialize the logger and patch caller-location metadata.
 base_logger = init_logger()
 
 def fix_log_position(record):
-    """遍历调用栈，跳过loguru内部帧+工具类自身帧，提取业务代码实际调用位置"""
+    """Set log metadata to the first external business-code stack frame."""
     for frame in inspect.stack():
-        # 终极过滤：排除loguru内部 + 排除工具类logger.py自身，直接定位业务模块
+        # Skip Loguru internals and this utility to locate the real caller.
         if ("_logger.py" in frame.filename or frame.function == "_log") or "logger.py" in frame.filename:
             continue
-        # 更新日志字段为业务代码实际位置
+        # Replace the displayed source fields with the actual caller details.
         record.update(
             name=frame.filename.split("/")[-1].split("\\")[-1],
             function=frame.function,
@@ -99,10 +104,10 @@ def fix_log_position(record):
         )
         break
 
-# 应用终极修复，导出全局可用的logger
+# Apply caller correction and export the shared project logger.
 logger = base_logger.patch(fix_log_position)
 
-# -------------------------- 测试代码（验证修复效果） --------------------------
+# Manual smoke test for caller-location correction.
 if __name__ == '__main__':
     logger.info("【测试】logger.py内部调用（仅测试，业务模块调用会显示正确文件名）")
     logger.error("【测试】程序报错啦啦啦啦啦")

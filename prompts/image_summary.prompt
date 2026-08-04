@@ -1,2 +1,5 @@
-这是“{root_folder}”文件中的一张图片，图片上文部分为“{image_content[0]}”，
-下文部分为“{image_content[1]}”，请用中文简要总结这张图片的内容，用于 Markdown 图片标题，控制在50字以内。
+This image appears in the document "{root_folder}".
+The text immediately before the image is: "{image_content[0]}"
+The text immediately after the image is: "{image_content[1]}"
+
+Using the image and its surrounding context, write a concise description suitable for Markdown alt text. If the text immediately before and after the image is in English, write the description in English. Otherwise, use the predominant language of the surrounding context. Focus on the image's meaningful content and its relevance to the document. Return only the description, without a label, preamble, or Markdown syntax, and limit it to 80 words.

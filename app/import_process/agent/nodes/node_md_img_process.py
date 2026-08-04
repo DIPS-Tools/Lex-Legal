@@ -1,11 +1,60 @@
 """
-Node summary: Markdown image processing pipeline.
+Markdown image processing pipeline.
 
 This node post-processes a Markdown file that was usually generated from a PDF.
 Its job is to find local images referenced by the Markdown, generate a useful
 description for each image with a vision-capable LLM, upload those images to
 MinIO object storage, and rewrite the Markdown image links so they point to the
 uploaded MinIO URLs with the generated description as the alt text.
+
+---------------------------------
+MinIO is used because imported Markdown/PDF documents may reference images stored only on the import machine or inside a Docker container.
+  Those local paths would not be accessible later by the query API or web frontend.
+
+  The project’s flow is:
+
+  Local document image
+          ↓
+  Upload to MinIO bucket
+          ↓
+  Replace local Markdown path with a MinIO URL
+          ↓
+  Store/index the rewritten Markdown
+          ↓
+  Query API extracts the URL
+          ↓
+  Frontend displays the image
+
+  In app/import_process/agent/nodes/node_md_img_process.py:342, images are uploaded under an object path resembling:
+
+  <bucket>/<image-directory>/<document-name>/<image-file>
+
+  For example:
+
+  legal-documents/upload-images/EU_Data_Act/figure-1.png
+
+  The original Markdown:
+
+  ![chart](./images/figure-1.png)
+
+  is rewritten as something like:
+
+  ![Chart showing data-sharing obligations](http://minio:9000/legal-documents/upload-images/EU_Data_Act/figure-1.png)
+
+  During querying, app/query_process/agent/nodes/node_answer_output.py:270 extracts these image URLs from retrieved documents and returns them
+  in image_urls.
+
+  A bucket is used because MinIO, like Amazon S3, requires objects to belong to a bucket. The bucket provides:
+
+  - Persistent storage independent of a particular API container.
+  - A shared location accessible by import, query, and frontend services.
+  - Logical isolation for this project’s files.
+  - Centralized access policies.
+  - Easier backup, migration, and future S3 compatibility.
+  - Better handling of binary files than MongoDB, Elasticsearch, or Milvus.
+
+---------------------------------
+
 
 Step-by-step workflow:
 1. Read and validate input state.
@@ -15,7 +64,7 @@ Step-by-step workflow:
 
 2. Scan the local images folder.
    - Only files with supported image extensions are considered.
-   - For each image file, the node checks whether the Markdown content references it.
+   - For each image file, the node checks whether the Markdown content references it (if it is used in the Markdown file).
    - Images that are not referenced in the Markdown are skipped.
 
 3. Extract context around each referenced image.
@@ -56,6 +105,7 @@ import os
 import re
 import sys
 import base64
+import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 from collections import deque
@@ -219,17 +269,21 @@ def find_image_in_md_content(md_content, image_file, context_length: int = 100):
 
     # item = items[0]
     # start, end = item.span()
+    logger.info(f"Found {len(items)} items about {image_file} in md file")
 
     if item := items[0]:
+
         start, end = item.span()  # span returns the start and end indexes of the matched image reference.
+
         # Capture text before the image reference.
         pre_text = md_content[max(start - context_length, 0):start]  # Clamp to 0 when fewer previous characters exist.
         post_text = md_content[end:min(end + context_length, len(md_content))]  # Clamp to content length at the end.
         # Capture text after the image reference.
         content = (pre_text, post_text)
+
     # Return the text surrounding the matched image reference.
     if content:
-        logger.info(f"Image {image_file} found in content preview {md_content[:100]}; first context extracted: {content}")
+        logger.info(f"Image {image_file} found in md content; surrounding context extracted: {content}")
         return content
 
 
@@ -280,10 +334,13 @@ def step_3_generate_img_summaries(targets, stem):
     :param stem: Markdown file stem, also used as the image folder name in prompts.
     :return: Mapping of image_name to generated summary text.
     """
+
     summaries = {}  # Final mapping of image file name to generated summary.
+
     # Request one summary per image from the vision model.
     # request_times tracks recent requests so rate limiting can be applied consistently.
     request_times = deque()
+
     for image_file, image_path, context in targets:
         # Unpack image name, local image path, and surrounding Markdown context.
         # 1. Apply API rate limiting before calling the model.
@@ -293,9 +350,10 @@ def step_3_generate_img_summaries(targets, stem):
 
         """
         for example:
-        Processing image cc5ee1ac24ebb2707d40dc7a234a8b243f55f5bf08fabc683859be6fdf096ffa.jpg, 
+        Processing 
+        image cc5ee1ac24ebb2707d40dc7a234a8b243f55f5bf08fabc683859be6fdf096ffa.jpg, 
         its path: /local/scratch/mh1f25/python_projects/guigu_ai/guigu_ai_projects/dataset_rag/output/hak180_Product_Safety_Manual/images/cc5ee1ac24ebb2707d40dc7a234a8b243f55f5bf08fabc683859be6fdf096ffa.jpg 
-        and context : ('利的边缘可能导致受伤。\n\n## 为设备选择一个安全的位置\n\n•\t提起本设备时，请使用双手抓稳本设备的两侧。如果抓住的是进纸托板和出纸盒，它们可能会掉下来。必须通过将双手放在本设备下面来搬运本设备。\n\n', '  \n确保本设备的任何部位均未伸出设备所在的桌面或支架。特别是当本设备位于桌面、支架等边缘时，请勿让出纸盒打开。确保本设备位于平整、水平且稳定的表面上，避免震动。不遵守这些预防措施可能导致设备跌落，从')
+        and context : surrounding description
         
         """
 
@@ -394,6 +452,7 @@ def step_4_upload_images_and_replace_md(summaries, targets, md_content, stem):
             logger.info(f"Finished uploading image {image_file}. URL: {images_url[image_file]}")
         except Exception as e:
             logger.error(f"Failed to upload image {image_file}. Reason: {e}")
+
     # 3. Replace image references in the Markdown content.
     # summaries = image_name: description
     # images_url = image_name: URL
@@ -462,8 +521,8 @@ def node_md_img(state: ImportGraphState) -> ImportGraphState:
     """
     function_name = sys._getframe().f_code.co_name
     logger.info(f">>> [{function_name}] Started. Current state: {state}")
-
     add_running_task(state['task_id'], function_name)
+
     # 1. Validate and collect the data required for this operation.
     #    Input: state with md_path and md_content.
     #    Output: validated Markdown content, Markdown Path object, and images directory Path object.
