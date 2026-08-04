@@ -35,7 +35,7 @@ from app.core.logger import logger
 from app.import_process.agent.state import ChunkRecord, ImportGraphState
 from app.llm.llm_utils import get_llm_client
 from app.utils.task_utils import add_done_task, add_running_task
-
+from app.prompt.load_prompt import load_prompt
 
 # Send several child chunks in one request instead of making one API request per
 # chunk. This reduces latency and API overhead while keeping each prompt small
@@ -71,45 +71,6 @@ LEGAL_LOCATION_REFERENCE_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-
-
-# The system prompt establishes the LLM's role, the exact response schema, and
-# quality rules. ``json_mode=True`` helps produce JSON, but explicit instructions
-# are still necessary because JSON mode does not guarantee our required keys.
-SYSTEM_PROMPT = """
-You extract retrieval key terms from European Union law and regulation text.
-
-Return only a JSON object with this exact structure:
-{
-  "chunks": [
-    {
-      "chunk_id": "the input chunk_id",
-      "key_terms": ["term one", "term two"]
-    }
-  ]
-}
-
-Rules:
-1. Return one result for every input chunk_id.
-2. Extract 3 to 8 concise, legally meaningful terms when the text supports them.
-3. Prefer exact legal phrases, regulated entities, rights, duties, procedures,
-   legal tests, exceptions, and defined terms found in the text.
-4. Do not return generic words such as "law", "article", "paragraph",
-   "regulation", "data", or "information" unless they are part of a specific
-   legal phrase.
-5. Do not invent legal concepts that are absent from the supplied text.
-6. Do not return legal citations, instrument identifiers, provision references,
-   dates, years, deadlines, or numbered ranges. Forbidden examples include
-   "Directive (EU) 2016/680", "Directive 2000/31/EC", "Articles 12 to 15",
-   "Article 6", "Recital 42", "26 April 2016", and "30 days".
-7. A key term must not contain digits. Extract the underlying legal concept
-   instead, but only when that concept is explicitly supported by the text.
-   For example, prefer "data subject access rights" over "Articles 12 to 15".
-8. Do not use a cited law's formal title as a key term. For example, do not
-   return "Directive 2011/24/EU of the European Parliament and of the Council".
-9. Do not include explanations, citations, numbering, or Markdown.
-10. If a chunk contains no useful legal key term, return an empty list.
-""".strip()
 
 
 def step_1_get_chunks_for_extraction(state: ImportGraphState) -> tuple[list[ChunkRecord], list[ChunkRecord]]:
@@ -324,10 +285,14 @@ def step_2_extract_batch_key_terms(
     # or hallucinated IDs from being written into our records.
     expected_ids = {chunk["chunk_id"] for chunk in batch}
 
+    # Keep the role, response schema, and extraction rules in the external
+    # prompt file so they can be maintained without duplicating Python code.
+    key_terms_extraction_prompt = load_prompt("key_term_extraction").strip()
+
     # SystemMessage contains stable role/schema rules. HumanMessage contains only
     # the current batch, so the same system instructions can serve every call.
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
+        SystemMessage(content=key_terms_extraction_prompt),
         HumanMessage(content=_build_user_prompt(batch)),
     ]
 
@@ -351,7 +316,7 @@ def step_2_extract_batch_key_terms(
 
     parsed = _parse_json_object(response.content)
 
-    # The top-level object must contain the list described by SYSTEM_PROMPT.
+    # The top-level object must contain the list required by the prompt file.
     result_items = parsed.get("chunks")
     if not isinstance(result_items, list):
         raise ValueError("LLM response is missing the 'chunks' list.")

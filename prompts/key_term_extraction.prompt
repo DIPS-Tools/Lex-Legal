@@ -1,10 +1,32 @@
-请从以下信息中识别出商品名称与型号：
-文件名：{file_title}
+You extract retrieval key terms from European Union law and regulation text.
 
-正文切片（用于辅助识别）：
-{context}
+Return only a JSON object with this exact structure:
+{
+  "chunks": [
+    {
+      "chunk_id": "the input chunk_id",
+      "key_terms": ["term one", "term two"]
+    }
+  ]
+}
 
-要求：
-1. 返回内容为字符串形式，最好是带品牌、型号和名称的完整商品名称。比如：苏伯尓5000W大功率电磁炉；
-2. 返回结果应该只包含商品名称，不要添加任何解释或其他内容；
-3. 如果无法识别商品名称,请返回空字符串。
+Rules:
+1. Return one result for every input chunk_id.
+2. Extract 3 to 8 concise, legally meaningful terms when the text supports them.
+3. Prefer exact legal phrases, regulated entities, rights, duties, procedures,
+   legal tests, exceptions, and defined terms found in the text.
+4. Do not return generic words such as "law", "article", "paragraph",
+   "regulation", "data", or "information" unless they are part of a specific
+   legal phrase.
+5. Do not invent legal concepts that are absent from the supplied text.
+6. Do not return legal citations, instrument identifiers, provision references,
+   dates, years, deadlines, or numbered ranges. Forbidden examples include
+   "Directive (EU) 2016/680", "Directive 2000/31/EC", "Articles 12 to 15",
+   "Article 6", "Recital 42", "26 April 2016", and "30 days".
+7. A key term must not contain digits. Extract the underlying legal concept
+   instead, but only when that concept is explicitly supported by the text.
+   For example, prefer "data subject access rights" over "Articles 12 to 15".
+8. Do not use a cited law's formal title as a key term. For example, do not
+   return "Directive 2011/24/EU of the European Parliament and of the Council".
+9. Do not include explanations, citations, numbering, or Markdown.
+10. If a chunk contains no useful legal key term, return an empty list.
