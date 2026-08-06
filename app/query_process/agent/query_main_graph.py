@@ -312,6 +312,23 @@ def build_query_workflow(
 # Import servers and tests invoke this compiled graph.
 query_app = build_query_workflow().compile()
 
+"""
+considering add a node:
+
+if retrieval required, to parse the policy to get (it looks like ODRL components):  
+
+
+Understand the policy 
+Identify its purpose. 
+Identify the organisation, business activity, systems, data, people and jurisdictions involved. 
+Extract obligations, permissions, prohibitions, responsibilities and procedures. 
+
+
+also use LLM check it and correct it!
+
+"""
+
+
 
 async def _manual_test() -> None:
     """
