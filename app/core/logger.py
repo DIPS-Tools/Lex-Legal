@@ -19,6 +19,7 @@ import sys
 import inspect
 from pathlib import Path
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -38,6 +39,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FILE_NAME = "app_{time:YYYYMMDD}.log"
 LOG_FILE_PATH = LOG_DIR / LOG_FILE_NAME
+FALLBACK_LOG_FILE_PATH = LOG_DIR / f"app_{{time:YYYYMMDD}}_uid-{os.getuid()}.log"
+
+
+def _select_log_file_path() -> Path:
+    """Avoid a daily log file owned by a different Docker user."""
+    current_daily_file = LOG_DIR / f"app_{datetime.now():%Y%m%d}.log"
+    if current_daily_file.exists() and not os.access(
+        current_daily_file,
+        os.W_OK,
+    ):
+        return FALLBACK_LOG_FILE_PATH
+    return LOG_FILE_PATH
 
 # Step 4: Define a colored, structured, readable log format.
 LOG_FORMAT = (
@@ -73,17 +86,35 @@ def init_logger():
     # Add daily file output when enabled through .env.
     if LOG_FILE_ENABLE:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        logger.add(
-            sink=LOG_FILE_PATH,
-            level=LOG_FILE_LEVEL,
-            format=LOG_FORMAT,
-            rotation="00:00",
-            retention=LOG_FILE_RETENTION,
-            encoding="utf-8",
-            enqueue=True,
-            backtrace=True,
-            diagnose=True
-        )
+        file_sink_options = {
+            "level": LOG_FILE_LEVEL,
+            "format": LOG_FORMAT,
+            "rotation": "00:00",
+            "retention": LOG_FILE_RETENTION,
+            "encoding": "utf-8",
+            "enqueue": True,
+            "backtrace": True,
+            "diagnose": True,
+        }
+        selected_log_path = _select_log_file_path()
+        try:
+            logger.add(sink=selected_log_path, **file_sink_options)
+        except PermissionError:
+            # A Docker container may create the shared daily file as another
+            # UID. The directory can still be writable by the host user, so
+            # keep file logging enabled without overwriting that existing file.
+            try:
+                logger.add(
+                    sink=FALLBACK_LOG_FILE_PATH,
+                    **file_sink_options,
+                )
+            except OSError as fallback_exc:
+                # A logging destination must not prevent the application from
+                # starting. Console logging remains available when configured.
+                logger.warning(
+                    "File logging is disabled because neither the primary "
+                    f"nor fallback log file is writable: {fallback_exc}"
+                )
 
     return logger
 

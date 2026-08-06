@@ -40,7 +40,7 @@ from app.query_process.agent.state import QueryGraphState
 from app.utils.task_utils import add_done_task, add_running_task
 
 
-KEYWORD_SEARCH_LIMIT = 20
+KEYWORD_SEARCH_LIMIT = 10
 
 
 def _build_bm25_query(state: QueryGraphState) -> str:

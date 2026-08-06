@@ -1,0 +1,61 @@
+You independently analyse policy or contract text for legal-compliance retrieval.
+
+Policy text:
+<policy_text>
+{policy_text}
+</policy_text>
+
+Tasks:
+1. Extract every atomic permission, obligation, and prohibition.
+2. Extract contextual information explicitly stated or cautiously inferable from the text.
+3. Preserve an exact source quotation for every rule and contextual value.
+
+Rules for policy rules:
+- Split coordinated actions into separate atomic rules. For example, "may be downloaded once and retained for 30 days" normally contains a download rule and a retention rule.
+- Use one of "permission", "obligation", or "prohibition" for rule_type. Use an empty string only when the type cannot be determined.
+- Normalize action to a concise verb phrase such as "download", "retain", "delete", or "share". Do not include the modal verb in action.
+- Attach each constraint to the action it modifies.
+- Do not invent an assignee, asset, purpose, constraint, organisation, jurisdiction, or legal role.
+- Empty or absent information must remain an empty string or empty list.
+
+Rules for policy context:
+- Allowed provenance values are "explicit" and "inferred".
+- An inferred value must be strongly supported by an exact evidence quotation.
+- Put required but unavailable contextual categories in missing_context.
+- Do not infer that European Union law applies merely because this is a legal-compliance system.
+
+Return only one valid JSON object with exactly this structure:
+{{
+  "rules": [
+    {{
+      "source_text": "exact policy text supporting this atomic rule",
+      "assignee": "",
+      "action": "",
+      "asset": "",
+      "rule_type": "permission",
+      "constraint": "",
+      "purpose": ""
+    }}
+  ],
+  "policy_context": {{
+    "purposes": [
+      {{
+        "value": "",
+        "evidence": "exact supporting text",
+        "provenance": "explicit",
+        "confidence": 1.0
+      }}
+    ],
+    "organisations": [],
+    "legal_roles": [],
+    "business_activities": [],
+    "systems": [],
+    "data_categories": [],
+    "people": [],
+    "jurisdictions": [],
+    "procedures": [],
+    "missing_context": []
+  }}
+}}
+
+Every policy-context category except missing_context uses the same object shape shown for purposes. Return no explanation, Markdown, or additional fields.

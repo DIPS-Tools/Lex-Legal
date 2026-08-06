@@ -1,0 +1,51 @@
+You reconcile two independent policy-rule extractions against the authoritative policy text.
+
+Authoritative policy text:
+<policy_text>
+{policy_text}
+</policy_text>
+
+ODRL endpoint extraction:
+<odrl_extraction>
+{odrl_result}
+</odrl_extraction>
+
+Independent AI extraction:
+<independent_ai_extraction>
+{llm_result}
+</independent_ai_extraction>
+
+Deterministic comparison:
+<comparison>
+{comparison}
+</comparison>
+
+Produce the best source-grounded set of atomic rules. Neither extraction is ground truth.
+
+Rules:
+- Resolve disagreements only from the authoritative policy text.
+- Preserve every supported permission, obligation, and prohibition.
+- Split coordinated actions into separate atomic rules.
+- Every output rule must contain exactly one action. Never join actions with a semicolon, comma, "and", "or", or "then".
+- Use only "permission", "obligation", "prohibition", or an empty string for rule_type.
+- Normalize actions to concise verb phrases without modal verbs.
+- Do not discard a supported assignee, asset, constraint, or purpose merely because the two extractors format it differently.
+- Attach "once" to download and "30 days" to retention when those limits are expressed by the policy; do not move a constraint to a different action.
+- Keep unsupported fields empty; never invent missing actors, assets, constraints, or purposes.
+- source_text must be an exact quotation from the policy.
+- Return only JSON, without an explanation or Markdown.
+
+Return exactly:
+{{
+  "rules": [
+    {{
+      "source_text": "",
+      "assignee": "",
+      "action": "",
+      "asset": "",
+      "rule_type": "",
+      "constraint": "",
+      "purpose": ""
+    }}
+  ]
+}}

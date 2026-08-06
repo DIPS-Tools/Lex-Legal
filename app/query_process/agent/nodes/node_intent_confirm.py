@@ -62,6 +62,7 @@ IntentName = Literal[
     "clarification_needed",
     "general_conversation",
 ]
+TaskType = Literal["legal_question", "policy_compliance"]
 
 VALID_INTENTS: set[str] = {
     "legal_retrieval",
@@ -77,6 +78,8 @@ class IntentAnalysis(TypedDict):
     """Normalized information returned by the intent-analysis step."""
 
     intent: IntentName
+    task_type: TaskType
+    policy_text: str
     query_key_terms: list[str]
     rewritten_query: str
     direct_answer: str
@@ -202,6 +205,18 @@ def _normalize_intent_analysis(
         rewritten_query = original_query
 
     direct_answer = str(raw_result.get("direct_answer") or "").strip()
+    raw_task_type = str(raw_result.get("task_type") or "").strip()
+    task_type: TaskType = (
+        "policy_compliance"
+        if intent == "legal_retrieval" and raw_task_type == "policy_compliance"
+        else "legal_question"
+    )
+    policy_text = str(raw_result.get("policy_text") or "").strip()
+    if task_type == "policy_compliance" and not policy_text:
+        policy_text = original_query
+    if task_type != "policy_compliance":
+        policy_text = ""
+
     if intent == "legal_retrieval":
         # An empty answer is the graph's routing signal to continue to search.
         direct_answer = ""
@@ -215,6 +230,8 @@ def _normalize_intent_analysis(
 
     return {
         "intent": intent,
+        "task_type": task_type,
+        "policy_text": policy_text,
         "query_key_terms": _normalize_query_key_terms(
             raw_result.get("query_key_terms")
         ),
@@ -241,8 +258,11 @@ async def extract_query_key_terms_and_rewrite_query(
         query=original_query,
     )
     llm_client = get_llm_client(json_mode=True)
+
     response = await llm_client.ainvoke([HumanMessage(content=prompt)])
+
     parsed = _extract_json_object(response.content)
+
     result = _normalize_intent_analysis(parsed, original_query)
     logger.info(
         "Intent analysis completed: "
@@ -320,6 +340,8 @@ async def node_intent_confirm(state: QueryGraphState) -> dict[str, Any]:
         # continues to retrieval; a direct answer bypasses retrieval.
         update: dict[str, Any] = {
             "history": history_chats,
+            "task_type": analysis["task_type"],
+            "policy_text": analysis["policy_text"],
             "query_key_terms": analysis["query_key_terms"],
             "rewritten_query": analysis["rewritten_query"],
             "answer": analysis["direct_answer"],
@@ -335,7 +357,8 @@ async def node_intent_confirm(state: QueryGraphState) -> dict[str, Any]:
         )
         logger.info(
             f">>> [{function_name}] finished: "
-            f"session_id={session_id}, route={route}"
+            f"session_id={session_id}, route={route}, "
+            f"task_type={analysis['task_type']}"
         )
         return update
     except Exception:

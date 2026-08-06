@@ -50,7 +50,8 @@ from app.query_process.agent.state import QueryGraphState
 from app.utils.task_utils import add_done_task, add_running_task
 
 
-SEMANTIC_SEARCH_LIMIT = 20
+SEMANTIC_SEARCH_LIMIT = 10
+
 ACTIVE_CHILD_FILTER = (
     'record_type in ["child", "parent_child"] '
     'and status in ["in_force", "amended"]'

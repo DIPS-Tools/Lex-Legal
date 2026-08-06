@@ -15,7 +15,15 @@ START
 node_intent_confirm
   |-- answer already available ----------------------> node_answer_output
   |
-  `-- retrieval required
+  |-- ordinary legal retrieval ----------------------> node_hybrid_query
+  |
+  `-- policy compliance
+          |
+          v
+      node_policy_understanding
+          |
+          v
+      node_compliance_retrieval_plan
           |
           v
       node_hybrid_query  (search-strategy selection)
@@ -55,7 +63,10 @@ Equivalent Mermaid diagram
 flowchart TD
     START([START]) --> Intent[node_intent_confirm]
     Intent -->|direct answer| Answer[node_answer_output]
-    Intent -->|retrieval required| Strategy[node_hybrid_query]
+    Intent -->|ordinary legal question| Strategy[node_hybrid_query]
+    Intent -->|policy compliance| Policy[node_policy_understanding]
+    Policy --> Plan[node_compliance_retrieval_plan]
+    Plan --> Strategy
 
     Strategy -->|semantic_search| Semantic[node_embedding_semantic_search]
     Strategy -->|es_keywords_search| Keyword[node_es_keywords_search]
@@ -101,19 +112,15 @@ from typing import Any, Literal
 
 from dotenv import load_dotenv
 from langgraph.graph import END, START, StateGraph
-
 from app.query_process.agent.nodes.node_answer_output import node_answer_output
-
+from app.query_process.agent.nodes.node_compliance_retrieval_plan import node_compliance_retrieval_plan
 from app.query_process.agent.nodes.node_embedding_semantic_search import node_embedding_semantic_search
-
 from app.query_process.agent.nodes.node_es_keywords_search import node_es_keywords_search
-
 from app.query_process.agent.nodes.node_hybrid_query import node_hybrid_query
 from app.query_process.agent.nodes.node_intent_confirm import node_intent_confirm
 from app.query_process.agent.nodes.node_network_search import node_network_search
-
+from app.query_process.agent.nodes.node_policy_understanding import node_policy_understanding
 from app.query_process.agent.nodes.node_retrieval_quality_check import node_retrieval_quality_check
-
 from app.query_process.agent.nodes.node_rerank import node_rerank
 from app.query_process.agent.nodes.node_rrf import node_rrf
 from app.query_process.agent.nodes.node_search_join import node_search_join
@@ -123,7 +130,6 @@ from app.query_process.agent.state import (
     create_query_default_state,
 )
 
-
 load_dotenv()
 
 SearchType = Literal[
@@ -131,6 +137,7 @@ SearchType = Literal[
     "es_keywords_search",
     "hybrid_search",
 ]
+
 NodeCallable = Callable[[QueryGraphState], Any]
 
 SEARCH_NODE_NAMES = {
@@ -150,6 +157,8 @@ def route_after_intent_confirm(state: QueryGraphState) -> str:
     """
     if state.get("answer"):
         return "node_answer_output"
+    if state.get("task_type") == "policy_compliance":
+        return "node_policy_understanding"
     return "node_hybrid_query"
 
 
@@ -220,6 +229,8 @@ def build_query_workflow(
     """
     nodes = {
         "node_intent_confirm": node_intent_confirm,
+        "node_policy_understanding": node_policy_understanding,
+        "node_compliance_retrieval_plan": node_compliance_retrieval_plan,
         "node_hybrid_query": node_hybrid_query,
         "node_embedding_semantic_search": node_embedding_semantic_search,
         "node_es_keywords_search": node_es_keywords_search,
@@ -251,14 +262,18 @@ def build_query_workflow(
         route_after_intent_confirm,
         {
             "node_answer_output": "node_answer_output",
+            "node_policy_understanding": "node_policy_understanding",
             "node_hybrid_query": "node_hybrid_query",
         },
     )
 
+    # Policy assessments first produce independently validated rules and then
+    # convert them into the query fields consumed by the existing search path.
+    workflow.add_edge("node_policy_understanding","node_compliance_retrieval_plan")
+    workflow.add_edge("node_compliance_retrieval_plan", "node_hybrid_query")
+
     # Search-strategy fan-out. A hybrid decision returns both node names.
-    workflow.add_conditional_edges(
-        "node_hybrid_query",
-        route_after_search_strategy,
+    workflow.add_conditional_edges("node_hybrid_query", route_after_search_strategy,
         {
             "node_embedding_semantic_search": "node_embedding_semantic_search",
             "node_es_keywords_search": "node_es_keywords_search",
@@ -312,24 +327,6 @@ def build_query_workflow(
 # Import servers and tests invoke this compiled graph.
 query_app = build_query_workflow().compile()
 
-"""
-considering add a node:
-
-if retrieval required, to parse the policy to get (it looks like ODRL components):  
-
-
-Understand the policy 
-Identify its purpose. 
-Identify the organisation, business activity, systems, data, people and jurisdictions involved. 
-Extract obligations, permissions, prohibitions, responsibilities and procedures. 
-
-
-also use LLM check it and correct it!
-
-"""
-
-
-
 async def _manual_test() -> None:
     """
     Run one legal question through the complete compiled query graph.
@@ -347,8 +344,9 @@ async def _manual_test() -> None:
     mock_state: QueryGraphState = create_query_default_state(
         session_id="test_session_001",
         original_query=(
-            "May a news article be quoted in part when the publisher and "
-            "author are acknowledged?"
+            # "May a news article be quoted in part when the publisher and "
+            # "author are acknowledged?"
+            "compliance the policy : The document may be downloaded once and retained for 30 days for academic research only."
         ),
         search_type="hybrid_search",
         is_stream=False,

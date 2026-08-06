@@ -39,6 +39,8 @@ _NODE_NAME_TO_CN: Dict[str, str] = {
 
     # Legal RAG query workflow.
     "node_intent_confirm": "Understanding query intent",
+    "node_policy_understanding": "Understanding policy rules",
+    "node_compliance_retrieval_plan": "Planning compliance retrieval",
     "node_hybrid_query": "Selecting retrieval strategy",
     "node_embedding_semantic_search": "Searching semantic vectors",
     "node_es_keywords_search": "Searching legal keywords",

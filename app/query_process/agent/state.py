@@ -17,6 +17,18 @@ class QueryGraphState(TypedDict):
     session_id: str
     original_query: str
 
+    # Intent classification and optional policy-understanding results.
+    task_type: Literal["legal_question", "policy_compliance"]
+    policy_text: str
+    odrl_extracted_rules: list[dict]
+    llm_extracted_rules: list[dict]
+    policy_extraction_comparison: dict
+    validated_policy_rules: list[dict]
+    policy_context: dict
+    policy_understanding_errors: list[str]
+    odrl_audit_log_path: str
+    compliance_retrieval_queries: list[dict]
+
     # Search planning and retrieval results.
     search_type: Literal[
         "semantic_search",
@@ -56,6 +68,16 @@ class QueryGraphState(TypedDict):
 query_graph_default_state: QueryGraphState = {
     "session_id": "",
     "original_query": "",
+    "task_type": "legal_question",
+    "policy_text": "",
+    "odrl_extracted_rules": [],
+    "llm_extracted_rules": [],
+    "policy_extraction_comparison": {},
+    "validated_policy_rules": [],
+    "policy_context": {},
+    "policy_understanding_errors": [],
+    "odrl_audit_log_path": "",
+    "compliance_retrieval_queries": [],
     "semantic_searched_chunks": [],
     "keywords_searched_chunks": [],
     "network_searched_docs": [],
