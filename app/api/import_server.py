@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-import os
 import shutil
 import uuid
-from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import uvicorn
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 
-from app.clients.es_utils import es_client_manager
-from app.clients.milvus_utils import milvus_client_manager
+from app.api.authentication import require_admin_user
 from app.core.logger import logger
 from app.import_process.agent.state import get_default_state
 from app.utils.path_util import PROJECT_ROOT
@@ -46,48 +48,14 @@ IMPORT_PAGE_PATH = (
 )
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    """Close shared asynchronous database clients during server shutdown."""
-    yield
-    await es_client_manager.close()
-    await milvus_client_manager.close()
+import_router = APIRouter()
 
 
-app = FastAPI(
-    title="Legal Document Import Service",
-    description=(
-        "Upload PDF or Markdown legal documents and process them through "
-        "the law-aware LangGraph ingestion workflow."
-    ),
-    lifespan=lifespan,
+@import_router.get(
+    "/page",
+    response_class=FileResponse,
+    include_in_schema=False,
 )
-
-# Development deployments commonly serve the HTML and API from different
-# local ports. Set IMPORT_CORS_ORIGINS to a comma-separated allowlist in
-# production, for example: https://rag.example.org.
-configured_origins = os.getenv("IMPORT_CORS_ORIGINS", "*")
-cors_origins = [
-    origin.strip()
-    for origin in configured_origins.split(",")
-    if origin.strip()
-]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials="*" not in cors_origins,
-    allow_methods=["GET", "POST"],
-    allow_headers=["*"],
-)
-
-
-@app.get("/health", summary="Service health")
-async def health() -> dict[str, str]:
-    """Return a lightweight health response without contacting dependencies."""
-    return {"status": "ok"}
-
-
-@app.get("/import", response_class=FileResponse)
 async def get_import_page() -> FileResponse:
     """Serve the upload page maintained in lex-legal_frontend/templates."""
     if not IMPORT_PAGE_PATH.is_file():
@@ -210,10 +178,11 @@ async def run_import_graph(
         logger.exception(f"Import workflow failed. task_id={task_id}")
 
 
-@app.post(
+@import_router.post(
     "/upload",
     summary="Upload legal documents",
     status_code=202,
+    dependencies=[Depends(require_admin_user)],
 )
 async def upload_files(
     background_tasks: BackgroundTasks,
@@ -296,7 +265,7 @@ async def upload_files(
             {
                 "task_id": task_id,
                 "filename": safe_name,
-                "status_url": f"/status/{task_id}",
+                "status_url": f"/api/import/status/{task_id}",
             }
         )
         logger.info(
@@ -315,8 +284,14 @@ async def upload_files(
     }
 
 
-@app.get("/status/{task_id}", summary="Get import task status")
-async def get_task_progress(task_id: str) -> dict[str, Any]:
+@import_router.get(
+    "/status/{task_id}",
+    summary="Get import task status",
+    dependencies=[Depends(require_admin_user)],
+)
+async def get_task_progress(
+    task_id: str,
+) -> dict[str, Any]:
     """Return the global status and completed/running workflow stages."""
     status = get_task_status(task_id)
     if not status:
@@ -333,11 +308,3 @@ async def get_task_progress(task_id: str) -> dict[str, Any]:
         "running_list": get_running_task_list(task_id),
         "error": get_task_result(task_id, "error", ""),
     }
-
-
-if __name__ == "__main__":
-    uvicorn.run(
-        app,
-        host=os.getenv("IMPORT_SERVER_HOST", "127.0.0.1"),
-        port=int(os.getenv("IMPORT_SERVER_PORT", "8007")),
-    )

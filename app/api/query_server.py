@@ -1,13 +1,10 @@
 
-# Query API endpoints: health, chat page, query submission, SSE streaming,
+# Query API endpoints: chat page, query submission, SSE streaming,
 # conversation-history retrieval, and conversation-history deletion.
-from pathlib import Path
 import uuid
-import uvicorn
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from starlette.middleware.cors import CORSMiddleware
 from app.core.logger import logger
 from app.query_process.agent.state import create_query_default_state
 from app.utils.path_util import PROJECT_ROOT
@@ -16,28 +13,14 @@ from app.utils.task_utils import *
 from app.utils.sse_utils import create_sse_queue, SSEEvent, sse_generator
 from app.clients.mongo_utils import get_recent_messages, clear_history
 from app.query_process.agent.query_main_graph import query_app
+from app.api.authentication import require_authenticated_user
 
 
-# Create the FastAPI application.
-app = FastAPI(title="Legal Complance", description="Legal Complance Assistant")
-
-# Configure cross-origin access for the separately hosted Vue frontend.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Report whether the query API process is available.
-@app.get("/health")
-async def health():
-    logger.info("Query API health check completed successfully.")
-    return {"status": "ok"}
+query_router = APIRouter()
 
 
 # Return the standalone legal-compliance chat template.
-@app.get("/chat.html")
+@query_router.get("/chat.html", include_in_schema=False)
 async def chat_html():
     # Resolve the template from the project root rather than the process CWD.
     chat_html_path  = PROJECT_ROOT / 'lex-legal_frontend' / 'templates' / 'legal-compliance.html'
@@ -85,8 +68,14 @@ async def run_query_graph(query: str, session_id: str, is_stream: bool):
         push_to_session(session_id, SSEEvent.ERROR, {"error": str(e)})
 
 
-@app.post("/query")  # Client -> LangGraph -> retrieval -> response.
-async def query(request: QueryRequest, background_tasks: BackgroundTasks):
+@query_router.post(
+    "",
+    dependencies=[Depends(require_authenticated_user)],
+)  # Client -> LangGraph -> retrieval -> response.
+async def query(
+    request: QueryRequest,
+    background_tasks: BackgroundTasks,
+):
     """
     :param request:
     :param background_tasks: Runs the graph after returning a streaming task ID.
@@ -128,8 +117,14 @@ async def query(request: QueryRequest, background_tasks: BackgroundTasks):
         }
 
 
-@app.get("/stream/{session_id}")
-async def stream(session_id: str,request:Request):
+@query_router.get(
+    "/stream/{session_id}",
+    dependencies=[Depends(require_authenticated_user)],
+)
+async def stream(
+    session_id: str,
+    request: Request,
+):
     """
     :param session_id:
     :param request: Native request used to detect client disconnection.
@@ -149,8 +144,14 @@ async def stream(session_id: str,request:Request):
     )
 
 
-@app.get("/history/{session_id}")
-async def history(session_id: str,limit: int = 10):
+@query_router.get(
+    "/history/{session_id}",
+    dependencies=[Depends(require_authenticated_user)],
+)
+async def history(
+    session_id: str,
+    limit: int = 10,
+):
     """
     :param session_id:
     :param limit: Maximum number of recent messages to return.
@@ -172,8 +173,13 @@ async def history(session_id: str,limit: int = 10):
         "items": chats
     }
 
-@app.delete("/history/{session_id}")
-async def delete_history(session_id: str):
+@query_router.delete(
+    "/history/{session_id}",
+    dependencies=[Depends(require_authenticated_user)],
+)
+async def delete_history(
+    session_id: str,
+):
     """
     :param session_id:
     :return:
@@ -188,7 +194,3 @@ async def delete_history(session_id: str):
         "deleted_count":delete_count,
         "message": f"Conversation history deleted for session {session_id}."
     }
-
-
-if __name__ == '__main__':
-    uvicorn.run(app, host="127.0.0.1", port=8005)

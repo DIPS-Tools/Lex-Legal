@@ -1,5 +1,5 @@
 services:
-  # Legal query API and SSE endpoint.
+  # Unified legal compliance and document import API.
   lexlegal-api:
     build:
       context: .
@@ -21,7 +21,7 @@ services:
       - dips-local
     command:
       - uvicorn
-      - app.api.query_server:app
+      - app.api.lex_legal_api:app
       - --host
       - 0.0.0.0
       - --port
@@ -33,45 +33,6 @@ services:
         - python
         - -c
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8008/health', timeout=3)"
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  # PDF/Markdown knowledge-base import API.
-  lexlegal-import:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "8007:8007"
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    environment:
-      PYTHONPATH: /app
-      PROJECT_ROOT: /app
-      WATCHFILES_FORCE_POLLING: "true"
-    container_name: lexlegal-import-local
-    init: true
-    restart: unless-stopped
-    networks:
-      - dips-local
-    command:
-      - uvicorn
-      - app.api.import_server:app
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8007"
-      - --reload
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8007/health', timeout=3)"
       interval: 15s
       timeout: 5s
       retries: 5
@@ -89,8 +50,6 @@ services:
       - /app/node_modules
     depends_on:
       lexlegal-api:
-        condition: service_healthy
-      lexlegal-import:
         condition: service_healthy
     container_name: lexlegal-web-local
     init: true

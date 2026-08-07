@@ -15,7 +15,11 @@
           Open Legal Query
           <span aria-hidden="true">→</span>
         </RouterLink>
-        <RouterLink class="button button-quiet" to="/import">
+        <RouterLink
+          v-if="authState.status !== 'authenticated' || authState.user?.is_admin"
+          class="button button-quiet"
+          to="/import"
+        >
           Import documents
         </RouterLink>
       </div>

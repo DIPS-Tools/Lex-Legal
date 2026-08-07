@@ -11,7 +11,12 @@ import {
 } from 'vue'
 import { RouterLink } from 'vue-router'
 
-import { parseJsonResponse, queryApiBase } from '../services/api'
+import {
+  consumeEventStream,
+  parseJsonResponse,
+  apiBase,
+} from '../services/api'
+import { authenticatedFetch } from '../services/auth'
 import {
   type QueryActivity,
   upsertQueryActivity,
@@ -67,7 +72,7 @@ const historyLoading = ref(true)
 const messages = ref<ChatMessage[]>([])
 const chatEnd = ref<HTMLElement | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
-let activeEventSource: EventSource | null = null
+let activeStreamController: AbortController | null = null
 
 marked.setOptions({ breaks: true })
 
@@ -123,8 +128,8 @@ const updateActivity = (
 const loadHistory = async () => {
   historyLoading.value = true
   try {
-    const response = await fetch(
-      `${queryApiBase}/history/${encodeURIComponent(sessionId.value)}?limit=30`,
+    const response = await authenticatedFetch(
+      `${apiBase}/api/query/history/${encodeURIComponent(sessionId.value)}?limit=30`,
     )
     const data = await parseJsonResponse<HistoryResponse>(response)
     messages.value = (data.items || []).map((item) => ({
@@ -143,8 +148,8 @@ const loadHistory = async () => {
 }
 
 const startNewConversation = async () => {
-  activeEventSource?.close()
-  activeEventSource = null
+  activeStreamController?.abort()
+  activeStreamController = null
   messages.value = []
   queryText.value = ''
   sending.value = false
@@ -182,100 +187,82 @@ const finishAssistantMessage = (
   scrollToBottom()
 }
 
-const openEventStream = (
+const openEventStream = async (
   assistantMessage: ChatMessage,
   activityId: string,
   submittedQuery: string,
   startedAt: number,
 ) => {
   let streamedAnswer = ''
-  let completedTimer: number | undefined
   const progress: ProgressState = {
     status: 'processing',
     done: [],
     running: [],
   }
 
-  activeEventSource = new EventSource(
-    `${queryApiBase}/stream/${encodeURIComponent(sessionId.value)}`,
-  )
-
-  activeEventSource.addEventListener('progress', (event) => {
-    const payload = JSON.parse((event as MessageEvent).data || '{}')
-    progress.status = payload.status || progress.status
-    progress.done = Array.isArray(payload.done_list) ? payload.done_list : []
-    progress.running = Array.isArray(payload.running_list)
-      ? payload.running_list
-      : []
-    assistantMessage.progress = { ...progress }
-    updateActivity(
-      activityId,
-      submittedQuery,
-      payload.status === 'completed' ? 'completed' : 'processing',
-      progress,
-      startedAt,
-      assistantMessage.content.length,
+  activeStreamController?.abort()
+  const controller = new AbortController()
+  activeStreamController = controller
+  try {
+    const response = await authenticatedFetch(
+      `${apiBase}/api/query/stream/${encodeURIComponent(sessionId.value)}`,
+      {
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      },
     )
-
-    if (payload.status === 'completed') {
-      window.clearTimeout(completedTimer)
-      activeEventSource?.close()
-      activeEventSource = null
-      if (assistantMessage.pending) {
+    if (!response.ok) {
+      const error = await parseJsonResponse<{ detail?: string }>(response)
+      throw new Error(error.detail || 'Unable to open the event stream.')
+    }
+    await consumeEventStream(response, ({ event, data }) => {
+      const payload = JSON.parse(data || '{}')
+      if (event === 'progress') {
+        progress.status = payload.status || progress.status
+        progress.done = Array.isArray(payload.done_list) ? payload.done_list : []
+        progress.running = Array.isArray(payload.running_list)
+          ? payload.running_list
+          : []
+        assistantMessage.progress = { ...progress }
+        updateActivity(
+          activityId,
+          submittedQuery,
+          payload.status === 'completed' ? 'completed' : 'processing',
+          progress,
+          startedAt,
+          assistantMessage.content.length,
+        )
+        if (payload.status === 'completed' && assistantMessage.pending) {
+          finishAssistantMessage(
+            assistantMessage,
+            activityId,
+            submittedQuery,
+            streamedAnswer || 'The workflow completed without returning answer text.',
+            progress,
+            startedAt,
+          )
+        }
+      } else if (event === 'delta') {
+        streamedAnswer += payload.delta || ''
+        assistantMessage.content = streamedAnswer
+        scrollToBottom()
+      } else if (event === 'final' || event === 'final_answer') {
         finishAssistantMessage(
           assistantMessage,
           activityId,
           submittedQuery,
-          streamedAnswer || 'The workflow completed without returning answer text.',
+          payload.answer || streamedAnswer,
           progress,
           startedAt,
+          '',
+          payload.image_urls || [],
         )
+      } else if (event === 'error') {
+        throw new Error(payload.error || 'The query workflow failed.')
       }
-    }
-  })
-
-  activeEventSource.addEventListener('delta', (event) => {
-    const payload = JSON.parse((event as MessageEvent).data || '{}')
-    streamedAnswer += payload.delta || ''
-    assistantMessage.content = streamedAnswer
-    scrollToBottom()
-  })
-
-  const handleFinal = (event: Event) => {
-    window.clearTimeout(completedTimer)
-    const payload = JSON.parse((event as MessageEvent).data || '{}')
-    finishAssistantMessage(
-      assistantMessage,
-      activityId,
-      submittedQuery,
-      payload.answer || streamedAnswer,
-      progress,
-      startedAt,
-      '',
-      payload.image_urls || [],
-    )
-
-    // Keep the stream open briefly so run_query_graph can publish its final
-    // "completed" progress event after LangGraph returns. This prevents the
-    // backend queue from being removed before the terminal status is sent.
-    completedTimer = window.setTimeout(() => {
-      activeEventSource?.close()
-      activeEventSource = null
-    }, 2_000)
-  }
-
-  activeEventSource.addEventListener('final', handleFinal)
-  activeEventSource.addEventListener('final_answer', handleFinal)
-  activeEventSource.addEventListener('error', (event) => {
-    window.clearTimeout(completedTimer)
-    activeEventSource?.close()
-    let error = 'The streaming connection was interrupted.'
-    try {
-      const payload = JSON.parse((event as MessageEvent).data || '{}')
-      error = payload.error || error
-    } catch {
-      // EventSource also emits a generic error event with no data.
-    }
+    })
+  } catch (error) {
+    if (controller.signal.aborted) return
     finishAssistantMessage(
       assistantMessage,
       activityId,
@@ -283,9 +270,13 @@ const openEventStream = (
       streamedAnswer,
       progress,
       startedAt,
-      error,
+      error instanceof Error
+        ? error.message
+        : 'The streaming connection was interrupted.',
     )
-  })
+  } finally {
+    if (activeStreamController === controller) activeStreamController = null
+  }
 }
 
 const sendQuery = async (suggestion?: string) => {
@@ -333,7 +324,7 @@ const sendQuery = async (suggestion?: string) => {
   scrollToBottom()
 
   try {
-    const response = await fetch(`${queryApiBase}/query`, {
+    const response = await authenticatedFetch(`${apiBase}/api/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -391,7 +382,7 @@ const handleComposerKeydown = (event: KeyboardEvent) => {
 }
 
 onMounted(loadHistory)
-onBeforeUnmount(() => activeEventSource?.close())
+onBeforeUnmount(() => activeStreamController?.abort())
 </script>
 
 <template src="../../templates/legal-compliance.html"></template>

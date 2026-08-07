@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
+import { authState } from '../services/auth'
 
 const capabilities = [
   {

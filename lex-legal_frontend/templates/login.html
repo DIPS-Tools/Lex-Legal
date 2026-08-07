@@ -1,0 +1,55 @@
+<div class="login-page section-shell">
+  <section class="login-card">
+    <RouterLink class="login-back" to="/">← Back to overview</RouterLink>
+    <div class="login-identity">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 36 36">
+          <path d="M10 8h16M18 8v20M8 14h20M10 14l-4 8h8l-4-8Zm16 0-4 8h8l-4-8Z" />
+        </svg>
+      </span>
+      <span>
+        <strong>LexGuard</strong>
+        <small>Secure legal workspace</small>
+      </span>
+    </div>
+
+    <p class="eyebrow">Keycloak authentication</p>
+    <h2>Sign in to continue</h2>
+    <p class="login-intro">
+      Use your DIPS account to access LexGuard.
+    </p>
+
+    <form class="login-form" @submit.prevent="submit">
+      <label for="lexguard-username">Username or email</label>
+      <input
+        id="lexguard-username"
+        v-model="username"
+        autocomplete="username"
+        placeholder="Enter your username or email"
+        autofocus
+      />
+
+      <label for="lexguard-password">Password</label>
+      <input
+        id="lexguard-password"
+        v-model="password"
+        type="password"
+        autocomplete="current-password"
+        placeholder="Enter your password"
+      />
+
+      <p v-if="errorMessage" class="login-error" role="alert">
+        {{ errorMessage }}
+      </p>
+
+      <button
+        class="button button-primary"
+        type="submit"
+        :disabled="submitting || !username.trim() || !password"
+      >
+        <span v-if="submitting" class="login-spinner" aria-hidden="true" />
+        {{ submitting ? 'Signing in…' : 'Sign in' }}
+      </button>
+    </form>
+  </section>
+</div>

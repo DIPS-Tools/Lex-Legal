@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import { importApiBase, parseJsonResponse } from '../services/api'
+import { apiBase, parseJsonResponse } from '../services/api'
+import { authenticatedFetch } from '../services/auth'
 
 interface UploadTask {
   id: string
@@ -47,8 +48,8 @@ const pollTask = async (task: UploadTask) => {
   while (task.status !== 'completed' && task.status !== 'failed') {
     await delay(1600)
     try {
-      const response = await fetch(
-        `${importApiBase}/status/${encodeURIComponent(task.id)}`,
+      const response = await authenticatedFetch(
+        `${apiBase}/api/import/status/${encodeURIComponent(task.id)}`,
         { cache: 'no-store' },
       )
       const data = await parseJsonResponse<StatusResponse>(response)
@@ -91,7 +92,7 @@ const uploadFile = async (file: File) => {
   const body = new FormData()
   body.append('files', file)
   try {
-    const response = await fetch(`${importApiBase}/upload`, {
+    const response = await authenticatedFetch(`${apiBase}/api/import/upload`, {
       method: 'POST',
       body,
     })

@@ -27,17 +27,14 @@ Data Governance Act, Open Data Directive, and related digital regulations.
 
 ## Run the Application
 
-Start the import API:
+Start the unified API:
 
 ```bash
-uvicorn app.api.import_server:app --host 0.0.0.0 --port 8007
+uvicorn app.api.lex_legal_api:app --host 0.0.0.0 --port 8008
 ```
 
-Start the query API:
-
-```bash
-uvicorn app.api.query_server:app --host 0.0.0.0 --port 8008
-```
+Swagger UI at `http://localhost:8008/docs` groups the compliance and document
+import routes separately.
 
 Start the Vue frontend:
 
@@ -56,8 +53,8 @@ python -m app.scripts.build_rag_knowledge_base ./doc/laws \
 
 ## Run with Docker
 
-The development Compose stack starts the query API on port 8008, import API on
-port 8007, and Vue/Vite frontend on port 5176:
+The development Compose stack starts the unified API on port 8008 and the
+Vue/Vite frontend on port 5176:
 
 ```bash
 docker network inspect dips-local >/dev/null 2>&1 \

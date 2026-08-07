@@ -477,8 +477,9 @@ configured index is HNSW with cosine similarity, `M=16`, and
 
 | Module | Responsibility |
 |---|---|
-| `import_server.py` | Import health/page endpoints, safe streamed uploads, task directories, FastAPI background import execution, and status polling |
-| `query_server.py` | Query health/chat endpoints, synchronous and SSE query submission, graph execution, history retrieval, and history deletion |
+| `lex_legal_api.py` | Unified FastAPI application, CORS, lifespan, health, OpenAPI groups, and router assembly |
+| `import_server.py` | Import router: page, safe streamed uploads, task directories, background import execution, and status polling |
+| `query_server.py` | Compliance router: chat page, synchronous/SSE query submission, graph execution, and history operations |
 
 Import endpoints are `/health`, `/import`, `/upload`, and `/status/{task_id}`.
 Query endpoints are `/health`, `/chat.html`, `/query`, `/stream/{session_id}`,
@@ -624,7 +625,7 @@ for Markdown rendering, and DOMPurify for sanitization.
 | `src/main.ts` | Creates the Vue application, installs the router, loads global CSS |
 | `src/App.vue` | Application shell, navigation, responsive menu, and 15-second API health polling |
 | `src/router.ts` | Routes for overview, legal query, knowledge import, and monitor views |
-| `src/services/api.ts` | Query/import base URLs, JSON error handling, and health checks |
+| `src/services/api.ts` | Unified API base URL, JSON error handling, and health checks |
 | `src/services/activityStore.ts` | Browser-local query activity history, capped at 200 records |
 | `src/views/HomeView.vue` | Product overview and navigation |
 | `src/views/ImportView.vue` | Drag/drop and file-picker uploads, per-task polling, progress, and error display |
@@ -634,9 +635,8 @@ for Markdown rendering, and DOMPurify for sanitization.
 | `templates/*.html` | Vue external templates and legacy standalone pages served by backend routes |
 | `vite.config.ts` | Vite/Vue build configuration |
 
-The frontend defaults to query API port 8008 and import API port 8007. These can
-be overridden with `VITE_QUERY_API_BASE_URL` and
-`VITE_IMPORT_API_BASE_URL` at build/development time.
+The frontend defaults to the unified API on port 8008. It can be overridden
+with `VITE_API_BASE_URL` at build/development time.
 
 ## 10. Prompt package
 
@@ -654,27 +654,21 @@ Key-term extraction currently embeds its system instructions directly in
 
 ## 11. API behavior
 
-### Import service
+### Unified API service
 
 Recommended command:
 
 ```bash
-uvicorn app.api.import_server:app --host 0.0.0.0 --port 8007
+uvicorn app.api.lex_legal_api:app --host 0.0.0.0 --port 8008
 ```
 
-`POST /upload` accepts one or more `.md`/`.pdf` files, sanitizes each filename,
+`POST /api/import/upload` accepts one or more `.md`/`.pdf` files, sanitizes each filename,
 streams it to `output/<YYYYMMDD>/<task-id>/`, returns HTTP 202, and schedules a
-background graph run. Clients poll `/status/<task-id>`.
+background graph run. Clients poll `/api/import/status/<task-id>`.
 
-### Query service
+### Compliance query routes
 
-Recommended command:
-
-```bash
-uvicorn app.api.query_server:app --host 0.0.0.0 --port 8008
-```
-
-`POST /query` accepts:
+`POST /api/query` accepts:
 
 ```json
 {
@@ -686,7 +680,7 @@ uvicorn app.api.query_server:app --host 0.0.0.0 --port 8008
 
 Non-streaming requests wait for the graph and return the answer. Streaming
 requests return the session ID immediately; the browser then connects to
-`GET /stream/{session_id}`. SSE event types include progress, token delta,
+`GET /api/query/stream/{session_id}`. SSE event types include progress, token delta,
 final answer, and error.
 
 ## 12. Configuration and deployment dependencies
@@ -705,7 +699,7 @@ configuration groups are:
 | MinerU | `MINERU_BASE_URL`, `MINERU_API_TOKEN` |
 | Reranker | `BGE_RERANKER_MODEL_PATH`, `BGE_RERANKER_DEVICE`, `BGE_RERANKER_FP16` |
 | Tavily MCP | `TAVILY_API_KEY`, optional MCP URL/timeout/domain settings |
-| APIs/CORS | `IMPORT_SERVER_HOST`, `IMPORT_SERVER_PORT`, `IMPORT_CORS_ORIGINS` |
+| APIs/CORS | `LEXLEGAL_CORS_ORIGINS` (with legacy query/import CORS fallbacks) |
 | Logging | console/file enablement and levels, retention |
 
 The TEI output dimension, `EMBEDDING_DIMENSION`, and Milvus vector schema must
@@ -715,8 +709,7 @@ match. The code checks this contract before import and query embedding.
 
 ```text
 Vue/Vite frontend       :5176
-Import FastAPI          :8007
-Query FastAPI           :8008
+Unified Lex-Legal API   :8008
 TEI embedding service   :8083 by default
 Elasticsearch           configured by ES_URL
 Milvus                  :19530 by default

@@ -2,16 +2,15 @@
 
 The repository provides:
 
-- `Dockerfile` for both Python API services;
+- `Dockerfile` for the unified Python API service;
 - `lex-legal_frontend/Dockerfile` for the Vue/Vite development server;
-- `docker-compose.yml` for the complete three-container application.
+- `docker-compose.yml` for the complete two-container application.
 
 ## Services and ports
 
 | Compose service | Application | Host port | Container command |
 |---|---|---:|---|
-| `lexlegal-api` | Legal query API and SSE | 8008 | `uvicorn app.api.query_server:app --host 0.0.0.0 --port 8008 --reload` |
-| `lexlegal-import` | PDF/Markdown import API | 8007 | `uvicorn app.api.import_server:app --host 0.0.0.0 --port 8007 --reload` |
+| `lexlegal-api` | Compliance query, SSE, authentication, and document import | 8008 | `uvicorn app.api.lex_legal_api:app --host 0.0.0.0 --port 8008 --reload` |
 | `lexlegal-web` | Vue/Vite frontend | 5176 | `npm run dev -- --host 0.0.0.0 --port 5176` |
 
 The repository is bind-mounted into the development containers. The Python
@@ -42,8 +41,7 @@ docker compose up --build
 Open:
 
 - frontend: `http://localhost:5176/`
-- query API documentation: `http://localhost:8008/docs`
-- import API documentation: `http://localhost:8007/docs`
+- unified API documentation: `http://localhost:8008/docs`
 
 Stop the application:
 
@@ -53,7 +51,7 @@ docker compose down
 
 ## Environment endpoints
 
-Compose loads the repository `.env` into both backend containers. Any service
+Compose loads the repository `.env` into the backend container. Any service
 running in another container should be addressed by its Docker Compose service
 name on `dips-local`, for example:
 
@@ -88,4 +86,3 @@ Vite's development server, Uvicorn `--reload`, and in-memory task/SSE state.
 For production, remove `--reload`, build static frontend assets, serve them from
 an HTTP server, use explicit CORS origins, and replace process-local background
 tasks/SSE queues with durable shared infrastructure.
-

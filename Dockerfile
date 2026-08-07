@@ -29,12 +29,12 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY app ./app
+COPY keycloak_auth ./keycloak_auth
 COPY configs ./configs
 COPY prompts ./prompts
 COPY lex-legal_frontend/templates ./lex-legal_frontend/templates
 COPY main.py ./main.py
 
-EXPOSE 8007 8008
+EXPOSE 8008
 
-# Compose overrides this for the import service.
-CMD ["uvicorn", "app.api.query_server:app", "--host", "0.0.0.0", "--port", "8008"]
+CMD ["uvicorn", "app.api.lex_legal_api:app", "--host", "0.0.0.0", "--port", "8008"]

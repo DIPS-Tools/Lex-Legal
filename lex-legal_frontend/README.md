@@ -30,19 +30,17 @@ when a template is edited while the development server is running.
 
 ## Backend services
 
-Start the APIs from the repository root:
+Start the unified API from the repository root:
 
 ```bash
-uvicorn app.api.import_server:app --host 0.0.0.0 --port 8007
-uvicorn app.api.query_server:app --host 0.0.0.0 --port 8008
+uvicorn app.api.lex_legal_api:app --host 0.0.0.0 --port 8008
 ```
 
-The frontend derives the API hostname from the browser URL and uses ports
-`8007` and `8008`. Override either endpoint when necessary:
+The frontend derives the API hostname from the browser URL and uses port
+`8008`. Override the endpoint when necessary:
 
 ```bash
-VITE_IMPORT_API_BASE_URL=http://127.0.0.1:8007
-VITE_QUERY_API_BASE_URL=http://127.0.0.1:8008
+VITE_API_BASE_URL=http://127.0.0.1:8008
 ```
 
 ## Development
