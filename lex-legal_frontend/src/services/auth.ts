@@ -73,7 +73,9 @@ export const login = async (
     body: JSON.stringify({ username: username.trim(), password }),
   })
   const data = await parseJsonResponse<LoginResponse>(response)
+  // save frontend authentication state
   saveAuthentication(data)
+
   return data.user
 }
 

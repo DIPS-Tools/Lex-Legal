@@ -36,7 +36,26 @@ const submit = async () => {
   try {
     const user = await login(username.value, password.value)
     password.value = ''
+
+
+    //After login, it calls:
+    //
+    //```typescript
+    //router.replace(destinationFor(user.is_admin))
+    //```
+    //
+    //The route guard in `lex-legal_frontend/src/router.ts` calls
+    //`restoreAuthentication()`. Because the reactive authentication state is now
+    //authenticated, navigation is allowed.
+    //
+    //Rules are:
+    //ordinary users can open `/legal-compliance`;
+    //administrators can also open `/import` and `/legal-query-monitor`;
+    //an ordinary user requesting an administrator route is redirected to `/legal-compliance`.
+
     await router.replace(destinationFor(user.is_admin))
+
+
   } catch (error) {
     errorMessage.value = error instanceof Error
       ? error.message
