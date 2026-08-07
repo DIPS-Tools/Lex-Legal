@@ -683,6 +683,20 @@ requests return the session ID immediately; the browser then connects to
 `GET /api/query/stream/{session_id}`. SSE event types include progress, token delta,
 final answer, and error.
 
+Authenticated conversation navigation is persisted in MongoDB. The
+`chat_conversation` collection stores each session's Keycloak subject, title,
+and created/updated timestamps, while `chat_message` stores the chronological
+messages. The API exposes:
+
+- `GET /api/query/conversations` to list the current user's chats;
+- `POST /api/query/conversations` to create a new chat;
+- `DELETE /api/query/conversations/{session_id}` to delete an owned chat;
+- `GET /api/query/history/{session_id}` to reopen an owned chat.
+
+Query submission, SSE streaming, history access, and deletion all validate
+the session owner. Missing sessions and sessions owned by another user both
+return HTTP 404 to avoid revealing another user's conversation identifiers.
+
 ## 12. Configuration and deployment dependencies
 
 Do not commit `.env`; it contains service locations and credentials. Main

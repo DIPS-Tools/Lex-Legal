@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
@@ -39,6 +40,7 @@ from motor.motor_asyncio import (
     AsyncIOMotorDatabase,
 )
 from pymongo import ASCENDING, DESCENDING
+from pymongo.errors import DuplicateKeyError
 
 from app.config.mongodb_config import MongoDBConfig, mongodb_config
 
@@ -56,7 +58,10 @@ class HistoryMongoTool:
     """
 
     COLLECTION_NAME = "chat_message"
+    CONVERSATION_COLLECTION_NAME = "chat_conversation"
     HISTORY_INDEX_NAME = "session_id_1_ts_-1"
+    CONVERSATION_SESSION_INDEX_NAME = "session_id_1_unique"
+    CONVERSATION_OWNER_INDEX_NAME = "owner_id_1_updated_at_-1"
     VALID_ROLES = {"user", "assistant", "system", "tool"}
 
     def __init__(
@@ -68,6 +73,7 @@ class HistoryMongoTool:
         self.client: AsyncIOMotorClient | None = None
         self.db: AsyncIOMotorDatabase | None = None
         self.chat_message: AsyncIOMotorCollection | None = None
+        self.chat_conversation: AsyncIOMotorCollection | None = None
 
     def _get_url(self) -> str:
         """
@@ -100,6 +106,15 @@ class HistoryMongoTool:
             )
         return self.chat_message
 
+    def _require_conversation_collection(self) -> AsyncIOMotorCollection:
+        """Return the initialized conversation metadata collection."""
+        if self.chat_conversation is None:
+            raise RuntimeError(
+                "MongoDB conversation metadata has not been initialized. "
+                "Call await HistoryMongoTool.init() first."
+            )
+        return self.chat_conversation
+
     async def init(self) -> "HistoryMongoTool":
         """
         Connect to MongoDB and create the history query index.
@@ -125,6 +140,9 @@ class HistoryMongoTool:
             await client.admin.command("ping")
             database = client[self.db_name]
             collection = database[self.COLLECTION_NAME]
+            conversation_collection = database[
+                self.CONVERSATION_COLLECTION_NAME
+            ]
 
             # This compound index matches get_recent_messages(): first filter
             # one session, then read that session's newest timestamps. Naming
@@ -136,6 +154,15 @@ class HistoryMongoTool:
                 ],
                 name=self.HISTORY_INDEX_NAME,
             )
+            await conversation_collection.create_index(
+                [("session_id", ASCENDING)],
+                name=self.CONVERSATION_SESSION_INDEX_NAME,
+                unique=True,
+            )
+            await conversation_collection.create_index(
+                [("owner_id", ASCENDING), ("updated_at", DESCENDING)],
+                name=self.CONVERSATION_OWNER_INDEX_NAME,
+            )
         except Exception:
             client.close()
             logging.exception(
@@ -146,6 +173,7 @@ class HistoryMongoTool:
         self.client = client
         self.db = database
         self.chat_message = collection
+        self.chat_conversation = conversation_collection
         logging.info(
             "MongoDB conversation history initialized: "
             f"database={self.db_name}, collection={self.COLLECTION_NAME}"
@@ -168,6 +196,132 @@ class HistoryMongoTool:
         self.client = None
         self.db = None
         self.chat_message = None
+        self.chat_conversation = None
+
+    async def create_conversation(
+        self,
+        owner_id: str,
+        session_id: str,
+        title: str = "",
+    ) -> dict[str, Any]:
+        """Create an empty, user-owned conversation."""
+        normalized_owner = self._required_text(owner_id, "owner_id")
+        normalized_session = self._required_text(session_id, "session_id")
+        normalized_title = self._conversation_title(title)
+        now = datetime.now(timezone.utc)
+        document = {
+            "session_id": normalized_session,
+            "owner_id": normalized_owner,
+            "title": normalized_title or "New conversation",
+            "title_is_default": not bool(normalized_title),
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            result = await self._require_conversation_collection().insert_one(
+                document
+            )
+        except DuplicateKeyError:
+            return await self.require_owned_conversation(
+                normalized_owner,
+                normalized_session,
+            )
+        document["_id"] = result.inserted_id
+        return self._serialize_document(document)
+
+    async def ensure_conversation(
+        self,
+        owner_id: str,
+        session_id: str,
+        title_seed: str = "",
+    ) -> dict[str, Any]:
+        """Create or touch a conversation while enforcing its owner."""
+        normalized_owner = self._required_text(owner_id, "owner_id")
+        normalized_session = self._required_text(session_id, "session_id")
+        collection = self._require_conversation_collection()
+        existing = await collection.find_one(
+            {"session_id": normalized_session}
+        )
+        if existing is None:
+            return await self.create_conversation(
+                normalized_owner,
+                normalized_session,
+                title=self._conversation_title(title_seed),
+            )
+        if existing.get("owner_id") != normalized_owner:
+            raise PermissionError("Conversation is not owned by this user.")
+
+        updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+        generated_title = self._conversation_title(title_seed)
+        if existing.get("title_is_default", False) and generated_title:
+            updates.update(
+                {
+                    "title": generated_title,
+                    "title_is_default": False,
+                }
+            )
+        await collection.update_one(
+            {"session_id": normalized_session, "owner_id": normalized_owner},
+            {"$set": updates},
+        )
+        existing.update(updates)
+        return self._serialize_document(existing)
+
+    async def require_owned_conversation(
+        self,
+        owner_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """Return a conversation only when it belongs to the given user."""
+        normalized_owner = self._required_text(owner_id, "owner_id")
+        normalized_session = self._required_text(session_id, "session_id")
+        document = await self._require_conversation_collection().find_one(
+            {
+                "session_id": normalized_session,
+                "owner_id": normalized_owner,
+            }
+        )
+        if document is None:
+            raise LookupError("Conversation was not found.")
+        return self._serialize_document(document)
+
+    async def list_conversations(
+        self,
+        owner_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List one user's conversations from most to least recently used."""
+        normalized_owner = self._required_text(owner_id, "owner_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer.")
+        bounded_limit = min(limit, 100)
+        cursor = (
+            self._require_conversation_collection()
+            .find({"owner_id": normalized_owner})
+            .sort("updated_at", DESCENDING)
+            .limit(bounded_limit)
+        )
+        documents = await cursor.to_list(length=bounded_limit)
+        return [self._serialize_document(document) for document in documents]
+
+    async def delete_conversation(
+        self,
+        owner_id: str,
+        session_id: str,
+    ) -> int:
+        """Delete owned conversation metadata and all of its messages."""
+        await self.require_owned_conversation(owner_id, session_id)
+        normalized_session = self._required_text(session_id, "session_id")
+        result = await self._require_collection().delete_many(
+            {"session_id": normalized_session}
+        )
+        await self._require_conversation_collection().delete_one(
+            {
+                "session_id": normalized_session,
+                "owner_id": self._required_text(owner_id, "owner_id"),
+            }
+        )
+        return int(result.deleted_count)
 
     async def clear_history(self, session_id: str) -> int:
         """Delete every message belonging to one session."""
@@ -368,6 +522,14 @@ class HistoryMongoTool:
         return normalized
 
     @staticmethod
+    def _conversation_title(value: Any, max_length: int = 72) -> str:
+        """Create a compact sidebar title from a user-provided value."""
+        title = re.sub(r"\s+", " ", str(value or "")).strip()
+        if len(title) <= max_length:
+            return title
+        return f"{title[: max_length - 1].rstrip()}…"
+
+    @staticmethod
     def _object_id(value: str) -> ObjectId:
         """Validate and convert a public string ID into a BSON ObjectId."""
         if not ObjectId.is_valid(value):
@@ -380,9 +542,10 @@ class HistoryMongoTool:
         serialized = dict(document)
         if "_id" in serialized:
             serialized["_id"] = str(serialized["_id"])
-        timestamp = serialized.get("ts")
-        if isinstance(timestamp, datetime):
-            serialized["ts"] = timestamp.isoformat()
+        for timestamp_field in ("ts", "created_at", "updated_at"):
+            timestamp = serialized.get(timestamp_field)
+            if isinstance(timestamp, datetime):
+                serialized[timestamp_field] = timestamp.isoformat()
         return serialized
 
 
@@ -406,6 +569,50 @@ async def clear_history(session_id: str) -> int:
     """Compatibility helper for deleting one session's history."""
     tool = await get_history_mongo_tool()
     return await tool.clear_history(session_id)
+
+
+async def create_conversation(
+    owner_id: str,
+    session_id: str,
+    title: str = "",
+) -> dict[str, Any]:
+    """Create an empty conversation owned by one Keycloak subject."""
+    tool = await get_history_mongo_tool()
+    return await tool.create_conversation(owner_id, session_id, title)
+
+
+async def ensure_conversation(
+    owner_id: str,
+    session_id: str,
+    title_seed: str = "",
+) -> dict[str, Any]:
+    """Create or update owned conversation metadata."""
+    tool = await get_history_mongo_tool()
+    return await tool.ensure_conversation(owner_id, session_id, title_seed)
+
+
+async def require_owned_conversation(
+    owner_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Validate that a session belongs to one Keycloak subject."""
+    tool = await get_history_mongo_tool()
+    return await tool.require_owned_conversation(owner_id, session_id)
+
+
+async def list_conversations(
+    owner_id: str,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """List user-owned conversations."""
+    tool = await get_history_mongo_tool()
+    return await tool.list_conversations(owner_id, limit)
+
+
+async def delete_conversation(owner_id: str, session_id: str) -> int:
+    """Delete an owned conversation and its messages."""
+    tool = await get_history_mongo_tool()
+    return await tool.delete_conversation(owner_id, session_id)
 
 
 async def save_chat_message(

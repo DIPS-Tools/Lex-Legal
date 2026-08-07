@@ -526,6 +526,12 @@ a {
   background: #d2e2fb;
 }
 
+.new-conversation-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+  transform: none;
+}
+
 .new-conversation-button svg,
 .sidebar-nav-item svg {
   width: 18px;
@@ -538,13 +544,108 @@ a {
 
 .sidebar-navigation {
   display: flex;
-  margin: 28px 0;
+  flex: 1;
+  min-height: 0;
+  margin: 28px 0 14px;
   flex-direction: column;
   gap: 5px;
 }
 
 .sidebar-navigation .sidebar-label {
   padding: 0 11px 7px;
+}
+
+.conversation-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.conversation-row {
+  display: grid;
+  margin-bottom: 4px;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  border-radius: 11px;
+  color: #555d68;
+}
+
+.conversation-row:hover,
+.conversation-row.active {
+  color: #244f91;
+  background: #e2e8f1;
+}
+
+.conversation-row.active {
+  font-weight: 700;
+}
+
+.conversation-open,
+.conversation-delete {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.conversation-open {
+  display: flex;
+  min-width: 0;
+  height: 41px;
+  padding: 0 4px 0 11px;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  font-size: 11px;
+}
+
+.conversation-open svg {
+  width: 17px;
+  min-width: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.conversation-open span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-delete {
+  width: 25px;
+  height: 25px;
+  border-radius: 7px;
+  opacity: 0;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.conversation-row:hover .conversation-delete,
+.conversation-row.active .conversation-delete,
+.conversation-delete:focus-visible {
+  opacity: 0.65;
+}
+
+.conversation-delete:hover {
+  color: #a53f3f;
+  background: rgba(165, 63, 63, 0.09);
+  opacity: 1;
+}
+
+.conversation-list-state,
+.conversation-list-error {
+  margin: 4px 10px;
+  color: #858c95;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.conversation-list-error {
+  color: #a04444;
 }
 
 .sidebar-nav-item {

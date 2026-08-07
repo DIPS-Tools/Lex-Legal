@@ -11,6 +11,7 @@
     <button
       class="new-conversation-button"
       type="button"
+      :disabled="conversationActionPending || sending"
       @click="startNewConversation"
     >
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -21,24 +22,48 @@
 
     <div class="sidebar-navigation">
       <span class="sidebar-label">Chats</span>
-      <RouterLink class="sidebar-nav-item active" to="/legal-compliance">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5.5 4v-4.25A2.5 2.5 0 0 1 4 13.5z" />
-        </svg>
-        <span>Legal assistant</span>
-      </RouterLink>
-      <RouterLink class="sidebar-nav-item" to="/import">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M3.5 6.5h6l2 2H20.5v10h-17z" />
-        </svg>
-        <span>Knowledge import</span>
-      </RouterLink>
-      <RouterLink class="sidebar-nav-item" to="/legal-query-monitor">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 19V9m6 10V5m6 14v-7m4 7H2" />
-        </svg>
-        <span>Query monitor</span>
-      </RouterLink>
+      <div v-if="conversationsLoading" class="conversation-list-state">
+        Loading chats…
+      </div>
+      <div
+        v-else-if="conversations.length === 0"
+        class="conversation-list-state"
+      >
+        No saved chats yet
+      </div>
+      <div v-else class="conversation-list">
+        <div
+          v-for="conversation in conversations"
+          :key="conversation.session_id"
+          class="conversation-row"
+          :class="{ active: conversation.session_id === sessionId }"
+        >
+          <button
+            class="conversation-open"
+            type="button"
+            :title="conversation.title"
+            :disabled="sending"
+            @click="openConversation(conversation)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5.5 4v-4.25A2.5 2.5 0 0 1 4 13.5z" />
+            </svg>
+            <span>{{ conversation.title }}</span>
+          </button>
+          <button
+            class="conversation-delete"
+            type="button"
+            :aria-label="`Delete ${conversation.title}`"
+            :disabled="sending || conversationActionPending"
+            @click="removeConversation(conversation)"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      <p v-if="conversationError" class="conversation-list-error">
+        {{ conversationError }}
+      </p>
     </div>
 
     <div class="sidebar-capability-card">
@@ -56,9 +81,9 @@
       </div>
     </div>
 
-    <div class="sidebar-footer" :title="sessionId">
+    <div class="sidebar-footer" :title="sessionId || 'No active session'">
       <i />
-      <span>Session active</span>
+      <span>{{ sessionId ? 'Session active' : 'Starting session…' }}</span>
     </div>
   </aside>
 
@@ -66,7 +91,7 @@
     <header class="workspace-header">
       <div>
         <span class="workspace-kicker">Legal Query</span>
-        <h2>Compliance assistant</h2>
+        <h2>{{ activeConversation?.title || 'Compliance assistant' }}</h2>
       </div>
       <label class="stream-control">
         <input v-model="streamingEnabled" type="checkbox" />
@@ -172,14 +197,14 @@
         v-model="queryText"
         rows="1"
         placeholder="Ask a legal compliance question…"
-        :disabled="sending"
+        :disabled="sending || !sessionId"
         @input="resizeTextarea"
         @keydown="handleComposerKeydown"
       />
       <button
         type="button"
         aria-label="Send legal query"
-        :disabled="sending || !queryText.trim()"
+        :disabled="sending || !sessionId || !queryText.trim()"
         @click="sendQuery()"
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">

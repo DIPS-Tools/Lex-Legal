@@ -9,8 +9,6 @@ import {
   reactive,
   ref,
 } from 'vue'
-import { RouterLink } from 'vue-router'
-
 import {
   consumeEventStream,
   parseJsonResponse,
@@ -57,18 +55,30 @@ interface HistoryResponse {
   }>
 }
 
+interface Conversation {
+  session_id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+interface ConversationListResponse {
+  items?: Conversation[]
+}
+
 const makeId = () => globalThis.crypto?.randomUUID?.()
   ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const sessionId = ref(
-  localStorage.getItem('lexguard_session_id') || `legal-${makeId()}`,
-)
-localStorage.setItem('lexguard_session_id', sessionId.value)
+const sessionId = ref('')
 
 const queryText = ref('')
 const streamingEnabled = ref(true)
 const sending = ref(false)
 const historyLoading = ref(true)
+const conversationsLoading = ref(true)
+const conversationActionPending = ref(false)
+const conversationError = ref('')
+const conversations = ref<Conversation[]>([])
 const messages = ref<ChatMessage[]>([])
 const chatEnd = ref<HTMLElement | null>(null)
 const textarea = ref<HTMLTextAreaElement | null>(null)
@@ -82,6 +92,10 @@ const renderedMessages = computed(() => messages.value.map((message) => ({
     ? DOMPurify.sanitize(marked.parse(message.content || '') as string)
     : '',
 })))
+
+const activeConversation = computed(() => conversations.value.find(
+  (conversation) => conversation.session_id === sessionId.value,
+))
 
 const formatTime = (timestamp: number) => new Intl.DateTimeFormat('en-GB', {
   hour: '2-digit',
@@ -125,11 +139,34 @@ const updateActivity = (
   })
 }
 
-const loadHistory = async () => {
+const loadConversationList = async () => {
+  conversationsLoading.value = true
+  try {
+    const response = await authenticatedFetch(
+      `${apiBase}/api/query/conversations?limit=100`,
+    )
+    const data = await parseJsonResponse<ConversationListResponse>(response)
+    conversations.value = data.items || []
+    conversationError.value = ''
+  } catch (error) {
+    conversationError.value = error instanceof Error
+      ? error.message
+      : 'Unable to load conversations.'
+  } finally {
+    conversationsLoading.value = false
+  }
+}
+
+const loadHistory = async (targetSessionId = sessionId.value) => {
+  if (!targetSessionId) {
+    messages.value = []
+    historyLoading.value = false
+    return
+  }
   historyLoading.value = true
   try {
     const response = await authenticatedFetch(
-      `${apiBase}/api/query/history/${encodeURIComponent(sessionId.value)}?limit=30`,
+      `${apiBase}/api/query/history/${encodeURIComponent(targetSessionId)}?limit=100`,
     )
     const data = await parseJsonResponse<HistoryResponse>(response)
     messages.value = (data.items || []).map((item) => ({
@@ -147,16 +184,99 @@ const loadHistory = async () => {
   }
 }
 
+const createConversation = async (): Promise<Conversation> => {
+  const response = await authenticatedFetch(
+    `${apiBase}/api/query/conversations`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    },
+  )
+  return parseJsonResponse<Conversation>(response)
+}
+
 const startNewConversation = async () => {
+  if (conversationActionPending.value || sending.value) return
+  conversationActionPending.value = true
+  conversationError.value = ''
   activeStreamController?.abort()
   activeStreamController = null
-  messages.value = []
+  try {
+    const conversation = await createConversation()
+    conversations.value = [
+      conversation,
+      ...conversations.value.filter(
+        (item) => item.session_id !== conversation.session_id,
+      ),
+    ]
+    sessionId.value = conversation.session_id
+    localStorage.setItem('lexguard_session_id', conversation.session_id)
+    messages.value = []
+    queryText.value = ''
+    historyLoading.value = false
+    await nextTick()
+    textarea.value?.focus()
+  } catch (error) {
+    conversationError.value = error instanceof Error
+      ? error.message
+      : 'Unable to create a conversation.'
+  } finally {
+    conversationActionPending.value = false
+  }
+}
+
+const openConversation = async (conversation: Conversation) => {
+  if (
+    sending.value
+    || conversationActionPending.value
+    || conversation.session_id === sessionId.value
+  ) return
+  activeStreamController?.abort()
+  activeStreamController = null
+  sessionId.value = conversation.session_id
+  localStorage.setItem('lexguard_session_id', conversation.session_id)
   queryText.value = ''
-  sending.value = false
-  sessionId.value = `legal-${makeId()}`
-  localStorage.setItem('lexguard_session_id', sessionId.value)
-  await nextTick()
-  textarea.value?.focus()
+  await loadHistory(conversation.session_id)
+}
+
+const removeConversation = async (conversation: Conversation) => {
+  if (sending.value || conversationActionPending.value) return
+  if (!window.confirm(`Delete “${conversation.title}” and its messages?`)) return
+  conversationActionPending.value = true
+  conversationError.value = ''
+  try {
+    const response = await authenticatedFetch(
+      `${apiBase}/api/query/conversations/${encodeURIComponent(conversation.session_id)}`,
+      { method: 'DELETE' },
+    )
+    await parseJsonResponse(response)
+    conversations.value = conversations.value.filter(
+      (item) => item.session_id !== conversation.session_id,
+    )
+    if (sessionId.value === conversation.session_id) {
+      const nextConversation = conversations.value[0]
+      if (nextConversation) {
+        sessionId.value = nextConversation.session_id
+        localStorage.setItem('lexguard_session_id', nextConversation.session_id)
+        await loadHistory(nextConversation.session_id)
+      } else {
+        localStorage.removeItem('lexguard_session_id')
+        sessionId.value = ''
+        messages.value = []
+        historyLoading.value = false
+        conversationActionPending.value = false
+        await startNewConversation()
+        return
+      }
+    }
+  } catch (error) {
+    conversationError.value = error instanceof Error
+      ? error.message
+      : 'Unable to delete the conversation.'
+  } finally {
+    conversationActionPending.value = false
+  }
 }
 
 const finishAssistantMessage = (
@@ -336,6 +456,7 @@ const sendQuery = async (suggestion?: string) => {
     const data = await parseJsonResponse<QueryResponse>(response)
     sessionId.value = data.session_id || sessionId.value
     localStorage.setItem('lexguard_session_id', sessionId.value)
+    await loadConversationList()
 
     if (streamingEnabled.value) {
       openEventStream(
@@ -381,7 +502,22 @@ const handleComposerKeydown = (event: KeyboardEvent) => {
   }
 }
 
-onMounted(loadHistory)
+const initializeConversations = async () => {
+  await loadConversationList()
+  const storedSessionId = localStorage.getItem('lexguard_session_id') || ''
+  const selected = conversations.value.find(
+    (conversation) => conversation.session_id === storedSessionId,
+  ) || conversations.value[0]
+  if (selected) {
+    sessionId.value = selected.session_id
+    localStorage.setItem('lexguard_session_id', selected.session_id)
+    await loadHistory(selected.session_id)
+  } else {
+    await startNewConversation()
+  }
+}
+
+onMounted(initializeConversations)
 onBeforeUnmount(() => activeStreamController?.abort())
 </script>
 

@@ -11,9 +11,20 @@ from app.utils.path_util import PROJECT_ROOT
 
 from app.utils.task_utils import *
 from app.utils.sse_utils import create_sse_queue, SSEEvent, sse_generator
-from app.clients.mongo_utils import get_recent_messages, clear_history
+from app.clients.mongo_utils import (
+    clear_history,
+    create_conversation,
+    delete_conversation,
+    ensure_conversation,
+    get_recent_messages,
+    list_conversations,
+    require_owned_conversation,
+)
 from app.query_process.agent.query_main_graph import query_app
-from app.api.authentication import require_authenticated_user
+from app.api.authentication import (
+    AuthenticatedUser,
+    require_authenticated_user,
+)
 
 
 query_router = APIRouter()
@@ -38,6 +49,27 @@ class QueryRequest(BaseModel):
     query: str = Field(..., title="The query content must be passed on.")
     session_id:str = Field(None, title="Session ID: It is not mandatory to pass this parameter; the backend will generate a unique UUID automatically.")
     is_stream:bool = Field(False, title="Whether to return results in a streaming manner")
+
+
+class ConversationCreateRequest(BaseModel):
+    """Optional display title for a newly created conversation."""
+
+    title: str = Field(default="", max_length=120)
+
+
+def _conversation_not_found() -> HTTPException:
+    """Use one response for absent and foreign sessions to avoid disclosure."""
+    return HTTPException(status_code=404, detail="Conversation was not found.")
+
+
+async def _require_owned_session(
+    identity: AuthenticatedUser,
+    session_id: str,
+) -> None:
+    try:
+        await require_owned_conversation(identity.subject, session_id)
+    except (LookupError, PermissionError) as exc:
+        raise _conversation_not_found() from exc
 
 
 async def run_query_graph(query: str, session_id: str, is_stream: bool):
@@ -68,13 +100,62 @@ async def run_query_graph(query: str, session_id: str, is_stream: bool):
         push_to_session(session_id, SSEEvent.ERROR, {"error": str(e)})
 
 
+@query_router.get("/conversations", summary="List conversations")
+async def conversations(
+    limit: int = 50,
+    identity: AuthenticatedUser = Depends(require_authenticated_user),
+):
+    """Return the authenticated user's recently active conversations."""
+    return {
+        "items": await list_conversations(identity.subject, limit),
+    }
+
+
 @query_router.post(
-    "",
-    dependencies=[Depends(require_authenticated_user)],
-)  # Client -> LangGraph -> retrieval -> response.
+    "/conversations",
+    summary="Create conversation",
+    status_code=201,
+)
+async def new_conversation(
+    request: ConversationCreateRequest,
+    identity: AuthenticatedUser = Depends(require_authenticated_user),
+):
+    """Create an empty conversation before its first legal query."""
+    session_id = f"legal-{uuid.uuid4()}"
+    return await create_conversation(
+        identity.subject,
+        session_id,
+        request.title,
+    )
+
+
+@query_router.delete(
+    "/conversations/{session_id}",
+    summary="Delete conversation",
+)
+async def remove_conversation(
+    session_id: str,
+    identity: AuthenticatedUser = Depends(require_authenticated_user),
+):
+    """Delete one owned conversation and its complete message history."""
+    try:
+        deleted_count = await delete_conversation(
+            identity.subject,
+            session_id,
+        )
+    except (LookupError, PermissionError) as exc:
+        raise _conversation_not_found() from exc
+    return {
+        "session_id": session_id,
+        "deleted_messages": deleted_count,
+    }
+
+
+@query_router.post("")  # Client -> LangGraph -> retrieval -> response.
 async def query(
     request: QueryRequest,
     background_tasks: BackgroundTasks,
+    identity: AuthenticatedUser = Depends(require_authenticated_user),
 ):
     """
     :param request:
@@ -86,6 +167,14 @@ async def query(
     query = request.query
     session_id = request.session_id or str(uuid.uuid4())
     is_stream = request.is_stream
+    try:
+        await ensure_conversation(
+            identity.subject,
+            session_id,
+            title_seed=query,
+        )
+    except PermissionError as exc:
+        raise _conversation_not_found() from exc
     # Streaming mode immediately returns the session ID, runs the graph in the
     # background, and publishes progress and answer events through SSE.
     if is_stream:
@@ -117,19 +206,18 @@ async def query(
         }
 
 
-@query_router.get(
-    "/stream/{session_id}",
-    dependencies=[Depends(require_authenticated_user)],
-)
+@query_router.get("/stream/{session_id}")
 async def stream(
     session_id: str,
     request: Request,
+    identity: AuthenticatedUser = Depends(require_authenticated_user),
 ):
     """
     :param session_id:
     :param request: Native request used to detect client disconnection.
     :return:
     """
+    await _require_owned_session(identity, session_id)
     logger.info(
         f"SSE connection established: session_id={session_id}"
     )
@@ -144,19 +232,18 @@ async def stream(
     )
 
 
-@query_router.get(
-    "/history/{session_id}",
-    dependencies=[Depends(require_authenticated_user)],
-)
+@query_router.get("/history/{session_id}")
 async def history(
     session_id: str,
     limit: int = 10,
+    identity: AuthenticatedUser = Depends(require_authenticated_user),
 ):
     """
     :param session_id:
     :param limit: Maximum number of recent messages to return.
     :return:
     """
+    await _require_owned_session(identity, session_id)
     # Retrieve recent messages in chronological display order.
     chats = await get_recent_messages(session_id, limit)
     # MongoDB ObjectId values are normalized by the history repository before
@@ -173,17 +260,16 @@ async def history(
         "items": chats
     }
 
-@query_router.delete(
-    "/history/{session_id}",
-    dependencies=[Depends(require_authenticated_user)],
-)
+@query_router.delete("/history/{session_id}")
 async def delete_history(
     session_id: str,
+    identity: AuthenticatedUser = Depends(require_authenticated_user),
 ):
     """
     :param session_id:
     :return:
     """
+    await _require_owned_session(identity, session_id)
     # Delete only persisted chat history for this conversation session.
     delete_count = await clear_history(session_id)
     logger.info(
