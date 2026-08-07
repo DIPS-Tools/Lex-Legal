@@ -1,4 +1,7 @@
-"""Build rule-aware legal retrieval inputs from structured policy state."""
+"""
+Build rule-aware legal retrieval inputs from
+structured policy state.
+"""
 
 from __future__ import annotations
 
