@@ -52,7 +52,7 @@ RERANK_MAX_TOP_K = 5
 
 # Keep at least three records when available before applying a score-gap cutoff.
 # Legal answers often need neighboring provisions or more than one authority.
-RERANK_MIN_TOP_K = 3
+RERANK_MIN_TOP_K = 2
 
 # After the minimum result count, stop when neighboring normalized scores show
 # either a large absolute drop or a large drop relative to the higher score.
@@ -283,6 +283,7 @@ def step_3_topk_and_gap(
         raise ValueError("Gap thresholds must not be negative.")
 
     retained_count = min(max_top_k, len(reranked_documents))
+
     if retained_count > min_top_k:
         # Begin comparisons only after the minimum evidence count. For example,
         # index=2 compares the third and fourth results when min_top_k is 3.
@@ -290,7 +291,10 @@ def step_3_topk_and_gap(
             current_score = float(reranked_documents[index]["score"])
             next_score = float(reranked_documents[index + 1]["score"])
             absolute_gap = current_score - next_score
+            # to prevent current_score is 0, so using max comparing with 1e-12
+            # using abs make sure always is positive
             relative_gap = absolute_gap / max(abs(current_score), 1e-12)
+            #  it curs score cliff
             if absolute_gap >= gap_abs or relative_gap >= gap_ratio:
                 retained_count = index + 1
                 break

@@ -19,11 +19,14 @@ class QueryGraphState(TypedDict):
 
     # Intent classification and optional policy-understanding results.
     task_type: Literal["legal_question", "policy_compliance"]
+    # pure the policy state, removing question description
     policy_text: str
+    
     odrl_extracted_rules: list[dict]
     llm_extracted_rules: list[dict]
     policy_extraction_comparison: dict
     validated_policy_rules: list[dict]
+
     policy_context: dict
     policy_understanding_errors: list[str]
     odrl_audit_log_path: str
@@ -63,7 +66,7 @@ class QueryGraphState(TypedDict):
 
 
 # ========================
-# 默认状态（全部为空）
+# default state
 # ========================
 query_graph_default_state: QueryGraphState = {
     "session_id": "",
@@ -97,7 +100,7 @@ query_graph_default_state: QueryGraphState = {
 
 
 # ========================
-# 创建默认状态（可覆盖）
+# create a default state
 # ========================
 def create_query_default_state(**overrides) -> QueryGraphState:
     """

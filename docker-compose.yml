@@ -20,6 +20,8 @@ services:
     networks:
       - dips-local
     command:
+      - python
+      - -m
       - uvicorn
       - app.api.lex_legal_api:app
       - --host

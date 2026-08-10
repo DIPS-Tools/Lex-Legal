@@ -9,7 +9,7 @@ MongoDBConfig
     -> HistoryMongoTool.init()
     -> AsyncIOMotorClient
     -> database
-    -> chat_message collection
+    -> lexlegal_message_history collection
     -> compound session/time index
 
 Query workflow
@@ -57,8 +57,8 @@ class HistoryMongoTool:
     imports, graph construction, and unit tests independent from MongoDB.
     """
 
-    COLLECTION_NAME = "chat_message"
-    CONVERSATION_COLLECTION_NAME = "chat_conversation"
+    COLLECTION_NAME = "lexlegal_message_history"
+    CONVERSATION_COLLECTION_NAME = "lexlegal_conversation_history"
     HISTORY_INDEX_NAME = "session_id_1_ts_-1"
     CONVERSATION_SESSION_INDEX_NAME = "session_id_1_unique"
     CONVERSATION_OWNER_INDEX_NAME = "owner_id_1_updated_at_-1"
@@ -343,6 +343,7 @@ class HistoryMongoTool:
         session_id: str,
         role: str,
         text: str,
+        policy_text: str = "",
         rewritten_query: str = "",
         query_key_terms: Sequence[str] | None = None,
         image_urls: list[str] | None = None,
@@ -369,6 +370,7 @@ class HistoryMongoTool:
             "session_id": normalized_session_id,
             "role": normalized_role,
             "text": self._required_text(text, "text"),
+            "policy_text": str(policy_text or "").strip(),
             "rewritten_query": str(rewritten_query or "").strip(),
             "query_key_terms": self._normalize_string_list(query_key_terms),
             "image_urls": self._normalize_string_list(image_urls),
@@ -619,6 +621,7 @@ async def save_chat_message(
     session_id: str,
     role: str,
     text: str,
+    policy_text: str = "",
     rewritten_query: str = "",
     query_key_terms: Sequence[str] | None = None,
     image_urls: list | None = None,
@@ -630,6 +633,7 @@ async def save_chat_message(
         session_id=session_id,
         role=role,
         text=text,
+        policy_text=policy_text,
         rewritten_query=rewritten_query,
         query_key_terms=query_key_terms,
         image_urls=image_urls,
@@ -651,6 +655,7 @@ async def get_recent_messages(
     limit: int = 10,
 ) -> list[dict[str, Any]]:
     """Compatibility helper for reading recent JSON-safe messages."""
+    # get a HistoryMongoTool object, lazily initialized history client
     tool = await get_history_mongo_tool()
     return await tool.get_recent_messages(session_id, limit)
 

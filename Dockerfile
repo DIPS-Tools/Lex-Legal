@@ -37,4 +37,4 @@ COPY main.py ./main.py
 
 EXPOSE 8008
 
-CMD ["uvicorn", "app.api.lex_legal_api:app", "--host", "0.0.0.0", "--port", "8008"]
+CMD ["python", "-m", "uvicorn", "app.api.lex_legal_api:app", "--host", "0.0.0.0", "--port", "8008"]

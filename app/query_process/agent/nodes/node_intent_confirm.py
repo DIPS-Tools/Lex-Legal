@@ -95,9 +95,30 @@ def _format_history_for_prompt(
     resolving references are included; internal IDs and image URLs would add
     tokens without helping intent classification. A character bound prevents
     unexpectedly large historical messages from dominating the LLM prompt.
+
+    each message likes:
+    {
+        _id: ObjectId('6a73651d8eabce52631f420d'),
+        session_id: 'legal-1785760936846-948ca57a620a8',
+        role: 'assistant',
+        text: 'Could you specify which document or policy this restriction applies to and the applicable jurisdiction?',
+        rewritten_query: 'Document download restricted to a single download and 30-day retention for academic research only.',
+        query_key_terms: [
+            'download_limit',
+            'retention_period',
+            'academic_research_use',
+            'usage_restriction',
+            'document_access_policy'
+        ],
+        image_urls: [],
+        ts: ISODate('2026-08-05T16:30:21.088Z')
+    }
+
     """
     if not history_chats:
         return "No previous conversation is available."
+
+    # logger.info(f"\n history_chats: {history_chats}")
 
     newest_first_lines: list[str] = []
     used_characters = 0
@@ -108,10 +129,13 @@ def _format_history_for_prompt(
             continue
 
         rewritten_query = str(chat.get("rewritten_query") or "").strip()
+        policy_text = str(chat.get("policy_text") or "").strip()
         query_key_terms = _normalize_query_key_terms(
             chat.get("query_key_terms", [])
         )
         line = f"Role: {role}\nMessage: {text}"
+        if policy_text:
+            line += f"\nEarlier extracted policy: {policy_text}"
         if rewritten_query:
             line += f"\nEarlier rewritten query: {rewritten_query}"
         if query_key_terms:
@@ -126,10 +150,14 @@ def _format_history_for_prompt(
         used_characters += min(len(line), remaining)
 
     newest_first_lines.reverse()
-    return (
+
+    ret_newest_first_lines = (
         "\n\n".join(newest_first_lines)
         or "No previous conversation is available."
     )
+
+    logger.info(f"newest_first_lines : {ret_newest_first_lines}")
+    return ret_newest_first_lines
 
 
 def _extract_json_object(content: Any) -> dict[str, Any]:
@@ -293,16 +321,15 @@ async def node_intent_confirm(state: QueryGraphState) -> dict[str, Any]:
     function_name = sys._getframe().f_code.co_name
     session_id = str(state.get("session_id") or "").strip()
     original_query = str(state.get("original_query") or "").strip()
+    #typewriter style output the result
     is_stream = bool(state.get("is_stream", False))
+
     if not session_id:
         raise ValueError("node_intent_confirm requires a non-empty session_id.")
     if not original_query:
         raise ValueError("node_intent_confirm requires a non-empty original_query.")
 
-    logger.info(
-        f">>> [{function_name}] started: "
-        f"session_id={session_id}, is_stream={is_stream}"
-    )
+    logger.info(f">>> [{function_name}] started: session_id={session_id}, is_stream={is_stream}")
     add_running_task(session_id, function_name, is_stream)
 
     try:
@@ -331,6 +358,7 @@ async def node_intent_confirm(state: QueryGraphState) -> dict[str, Any]:
             session_id=session_id,
             role="user",
             text=original_query,
+            policy_text=analysis["policy_text"],
             rewritten_query=analysis["rewritten_query"],
             query_key_terms=analysis["query_key_terms"],
             image_urls=[],

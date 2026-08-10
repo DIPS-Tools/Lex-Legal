@@ -684,8 +684,8 @@ requests return the session ID immediately; the browser then connects to
 final answer, and error.
 
 Authenticated conversation navigation is persisted in MongoDB. The
-`chat_conversation` collection stores each session's Keycloak subject, title,
-and created/updated timestamps, while `chat_message` stores the chronological
+`lexlegal_conversation_history` collection stores each session's Keycloak subject, title,
+and created/updated timestamps, while `lexlegal_message_history` stores the chronological
 messages. The API exposes:
 
 - `GET /api/query/conversations` to list the current user's chats;
