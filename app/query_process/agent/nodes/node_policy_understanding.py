@@ -214,7 +214,58 @@ def normalize_policy_context(value: Any) -> dict[str, Any]:
 
 
 def _source_contains(policy_text: str, evidence: str) -> bool:
-    """Compare evidence after whitespace normalization and case folding."""
+    """
+
+    Compare evidence after whitespace normalization and case folding.
+
+    For each rule, it asks:
+
+      Can this rule's source_text be found in the user's original policy?
+
+      ### Valid example
+
+      Original policy:
+
+      The document may be downloaded once and retained for 30 days.
+
+      Extracted rule:
+
+      {
+          "source_text": "The document may be downloaded once",
+          "action": "download",
+      }
+
+      The source text appears in the original policy, so no issue is produced:
+
+      []
+
+      ### Invalid example
+
+      Original policy:
+
+      The document may be downloaded once.
+
+      AI-extracted rule:
+
+      {
+          "source_text": "The document may be shared with commercial partners.",
+          "action": "share",
+      }
+
+      That sentence does not appear in the policy. The result is:
+
+      [
+          "independent_ai.rules[0].source_text is not supported by policy text"
+      ]
+
+      This may indicate that the AI invented or substantially paraphrased the evidence.
+
+
+
+
+    """
+
+
     normalized_policy = _clean_text(policy_text).casefold()
     normalized_evidence = _clean_text(evidence).casefold()
     return bool(
@@ -328,34 +379,73 @@ def compare_policy_extractions(
     errors: list[str] | None = None,
 ) -> dict[str, Any]:
     """Greedily align independent rules and describe every disagreement."""
-    candidates = sorted(
-        (
-            (_rule_similarity(odrl_rule, llm_rule), odrl_index, llm_index)
-            for odrl_index, odrl_rule in enumerate(odrl_rules)
-            for llm_index, llm_rule in enumerate(llm_rules)
-        ),
-        reverse=True,
-    )
+    # Compare every ODRL rule with every independently extracted AI rule.
+    # Each tuple contains: (similarity score, ODRL index, AI index).
+
+    # candidates = sorted(
+    #     (
+    #         (_rule_similarity(odrl_rule, llm_rule), odrl_index, llm_index)
+    #         for odrl_index, odrl_rule in enumerate(odrl_rules)
+    #         for llm_index, llm_rule in enumerate(llm_rules)
+    #     ),
+    #     reverse=True,
+    # )
+    # Each result is stored as:
+    #
+    #   (similarity_score, odrl_index, llm_index)
+    #
+    #   For example:
+    #
+    #   [
+    #       (0.82, 0, 0),
+    #       (0.35, 0, 1),
+    #       (0.41, 1, 0),
+    #       (0.91, 1, 1),
+    #   ]
+    #
+    #   After descending sorting:
+    #
+    #   [
+    #       (0.91, 1, 1),
+    #       (0.82, 0, 0),
+    #       (0.41, 1, 0),
+    #       (0.35, 0, 1),
+    #   ]
+
+
+    candidates: list[tuple[float, int, int]] = []
+    for odrl_index, odrl_rule in enumerate(odrl_rules):
+        for llm_index, llm_rule in enumerate(llm_rules):
+            score = _rule_similarity(odrl_rule, llm_rule)
+            candidates.append((score, odrl_index, llm_index))
+
+    # Process the most similar rule pairs first during greedy alignment.
+    candidates.sort(reverse=True)
     used_odrl: set[int] = set()
     used_llm: set[int] = set()
     matches: list[dict[str, Any]] = []
+
     for score, odrl_index, llm_index in candidates:
         if score < RULE_ALIGNMENT_THRESHOLD:
             break
+
         if odrl_index in used_odrl or llm_index in used_llm:
             continue
+
         used_odrl.add(odrl_index)
         used_llm.add(llm_index)
+
         odrl_rule = odrl_rules[odrl_index]
         llm_rule = llm_rules[llm_index]
+
         differences = {
             field: {
                 "odrl": odrl_rule[field],
                 "llm": llm_rule[field],
             }
             for field in RULE_FIELDS
-            if _comparison_text(odrl_rule[field])
-            != _comparison_text(llm_rule[field])
+
+            if _comparison_text(odrl_rule[field]) != _comparison_text(llm_rule[field])
         }
         matches.append({
             "odrl_index": odrl_index,
@@ -390,19 +480,147 @@ def compare_policy_extractions(
         "review_required": material_difference or bool(extraction_errors),
     }
 
+    """
+        for example:
+        {
+            "matches": [
+                  {
+                    "odrl_index": 0,
+                    "llm_index": 0,
+                    "score": 0.6228,
+                    "status": "partial_match",
+                    "differences": {
+                      "source_text": {
+                        "odrl": "The document may be downloaded once and retained for 30 days for academic research only.",
+                        "llm": "The document may be downloaded once"
+                      },
+                      "action": {
+                        "odrl": "may be downloaded",
+                        "llm": "download"
+                      },
+                      "asset": {
+                        "odrl": "The document",
+                        "llm": ""
+                      },
+                      "constraint": {
+                        "odrl": "for 30 days",
+                        "llm": "once"
+                      }
+                    }
+                  }
+            ],
+            "odrl_only_rule_indices": [],
+            "llm_only_rule_indices": [1],
+            "odrl_rule_count": 1,
+            "llm_rule_count": 2,
+            "errors": [],
+            "requires_reconciliation": true,
+            "review_required": true
+        }
+
+
+    """
+
 
 def reconciliation_quality_issues(
     reconciled_rules: list[dict[str, str]],
     odrl_rules: list[dict[str, str]],
     llm_rules: list[dict[str, str]],
 ) -> list[str]:
-    """Detect merged actions and information loss in reconciled output."""
+
+    """Detect merged actions and information loss in reconciled output.
+
+     This checks three important properties.
+
+          ### Atomic actions
+
+          The following is rejected:
+
+          {
+            "action": "download; retain"
+          }
+
+          Actions containing separators such as these are considered non-atomic:
+
+          ;
+          and
+          or
+          then
+
+          ### No lost AI actions
+
+          If the independent AI identified:
+
+          download
+          retain
+
+          the reconciliation result must preserve both actions.
+
+          If it returns only download, an issue is generated:
+
+          reconciled rules lost independent_ai.rules[1] action 'retain'
+
+          ### No complete loss of important fields
+
+          If either input contains an asset, but every reconciled rule has an empty asset, the result is rejected.
+
+          This is checked for:
+
+          assignee
+          asset
+          constraint
+          purpose
+
+          For example:
+
+          reconciled rules lost every supported 'purpose' value
+
+          ## Successful reconciliation
+
+          If there are no quality issues:
+
+          validated_rules = reconciled
+          selected_from = "ai_reconciliation"
+          reconciliation_method = "ai_reconciliation"
+
+          Later, IDs and provenance are added:
+
+          [
+            {
+              "policy_rule_id": "policy-rule-1",
+              "source_text": "The document may be downloaded once and retained for 30 days for academic research only.",
+              "assignee": "",
+              "action": "download",
+              "asset": "The document",
+              "rule_type": "permission",
+              "constraint": "once",
+              "purpose": "academic research only",
+              "selected_from": "ai_reconciliation"
+            },
+            {
+              "policy_rule_id": "policy-rule-2",
+              "source_text": "The document may be downloaded once and retained for 30 days for academic research only.",
+              "assignee": "",
+              "action": "retain",
+              "asset": "The document",
+              "rule_type": "permission",
+              "constraint": "30 days",
+              "purpose": "academic research only",
+              "selected_from": "ai_reconciliation"
+            }
+          ]
+
+          These become:
+
+          state["validated_policy_rules"]
+
+
+    """
+
     issues: list[str] = []
     for index, rule in enumerate(reconciled_rules):
         action = _comparison_text(rule.get("action"))
-        if ";" in rule.get("action", "") or re.search(
-            r"\b(?:and|or|then)\b", action
-        ):
+        if ";" in rule.get("action", "") or re.search(r"\b(?:and|or|then)\b", action):
             issues.append(
                 f"reconciled.rules[{index}].action is not atomic: "
                 f"{rule.get('action', '')!r}"
@@ -413,10 +631,7 @@ def reconciliation_quality_issues(
     reconciled_actions = [rule["action"] for rule in reconciled_rules]
     for index, rule in enumerate(llm_rules):
         action = rule.get("action", "")
-        if action and not any(
-            _text_similarity(action, candidate) >= 0.75
-            for candidate in reconciled_actions
-        ):
+        if action and not any( _text_similarity(action, candidate) >= 0.75 for candidate in reconciled_actions):
             issues.append(
                 f"reconciled rules lost independent_ai.rules[{index}] "
                 f"action {action!r}"
@@ -466,7 +681,111 @@ async def reconcile_policy_extractions(
     llm_rules: list[dict[str, str]],
     comparison: dict[str, Any],
 ) -> list[dict[str, str]]:
-    """Use a source-grounded AI pass to resolve material disagreement."""
+    """
+
+    Use a source-grounded AI pass to resolve material disagreement.
+    It is a third AI pass. It does not decide whether the policy complies with law. It decides what the policy itself says and produces one  reliable, atomic set of policy rules.
+
+     ## Why reconciliation is necessary
+
+      Consider this policy:
+      The document may be downloaded once and retained for 30 days for academic research only.
+      The ODRL endpoint might return one combined rule:
+      {
+        "action": "may be downloaded",
+        "asset": "The document",
+        "constraint": "for 30 days",
+        "purpose": "for academic research only"
+      }
+
+      This result has problems:
+      - downloading and retaining are different actions;
+      - once belongs to downloading;
+      - 30 days belongs to retention;
+      - one combined rule cannot represent those constraints accurately.
+
+      The independent AI might produce two atomic rules:
+
+          [
+            {
+              "action": "download",
+              "constraint": "once"
+            },
+            {
+              "action": "retain",
+              "constraint": "30 days"
+            }
+          ]
+
+      But it might omit the asset or format the purpose differently.
+
+      Reconciliation uses the strengths of both results while checking everything against the original policy.
+
+      ## Inputs
+
+      async def reconcile_policy_extractions(
+          policy_text,
+          odrl_rules,
+          llm_rules,
+          comparison,
+      )
+
+      It receives four pieces of information.
+
+      ### policy_text
+      The authoritative source:
+      The document may be downloaded once and retained for 30 days for academic research only.
+      This has priority over both extraction results.
+      ### odrl_rules
+      Rules returned by the ODRL endpoint.
+      ### llm_rules
+      Rules produced independently by the AI model.
+      ### comparison
+      The deterministic comparison result, including:
+
+      {
+        "matches": [...],
+        "odrl_only_rule_indices": [],
+        "llm_only_rule_indices": [1],
+        "requires_reconciliation": true,
+        "review_required": true
+      }
+      This helps the reconciliation model understand exactly where the two extractors disagree.
+
+
+     For example, it should return something similar to:
+      [
+          {
+              "source_text": (
+                  "The document may be downloaded once and retained "
+                  "for 30 days for academic research only."
+              ),
+              "assignee": "",
+              "action": "download",
+              "asset": "The document",
+              "rule_type": "permission",
+              "constraint": "once",
+              "purpose": "academic research only",
+          },
+          {
+              "source_text": (
+                  "The document may be downloaded once and retained "
+                  "for 30 days for academic research only."
+              ),
+              "assignee": "",
+              "action": "retain",
+              "asset": "The document",
+              "rule_type": "permission",
+              "constraint": "30 days",
+              "purpose": "academic research only",
+          },
+      ]
+
+
+
+
+    """
+
     prompt = load_prompt(
         "policy_reconciliation",
         policy_text=policy_text,
@@ -478,6 +797,11 @@ async def reconcile_policy_extractions(
         ),
         comparison=json.dumps(comparison, ensure_ascii=False, indent=2),
     )
+
+    """
+    
+    """
+
     model = get_llm_client(json_mode=True)
     response = await model.ainvoke([HumanMessage(content=prompt)])
     parsed = _parse_json_object(response.content, "Policy reconciliation AI")
@@ -542,13 +866,17 @@ def _assign_policy_rule_ids(
 async def node_policy_understanding(
     state: QueryGraphState,
 ) -> dict[str, Any]:
+
     """Extract, compare, reconcile, and audit structured policy information."""
+
     function_name = sys._getframe().f_code.co_name
     session_id = str(state.get("session_id") or "").strip()
     is_stream = bool(state.get("is_stream", False))
+
     policy_text = str(
         state.get("policy_text") or state.get("original_query") or ""
     ).strip()
+
     if not session_id:
         raise ValueError("node_policy_understanding requires a session_id.")
     if not policy_text:
@@ -610,12 +938,35 @@ async def node_policy_understanding(
             llm_rules,
             errors=errors,
         )
+
         source_validation_issues = [
             *_rule_source_issues(odrl_rules, policy_text, "odrl"),
             *_rule_source_issues(llm_rules, policy_text, "independent_ai"),
         ]
+        """
+        
+         It is equivalent to the more readable version:
+
+          odrl_source_issues = _rule_source_issues(
+              odrl_rules,
+              policy_text,
+              "odrl",
+          )
+        
+          ai_source_issues = _rule_source_issues(
+              llm_rules,
+              policy_text,
+              "independent_ai",
+          )
+        
+          source_validation_issues = (
+              odrl_source_issues + ai_source_issues
+          )
+
+        """
         comparison["source_validation_issues"] = source_validation_issues
         comparison["context_validation_warnings"] = context_warnings
+
         if source_validation_issues:
             comparison["review_required"] = True
             if not errors:
@@ -623,14 +974,17 @@ async def node_policy_understanding(
 
         reconciliation_method = "automatic_agreement"
         reconciliation_error = ""
+
         if odrl_error is not None and llm_error is not None:
             validated_rules: list[dict[str, str]] = []
             selected_from = "none"
-        elif comparison["requires_reconciliation"] and os.getenv(
-            "ODRL_AI_RECONCILIATION_ENABLED", "True"
-        ).lower() == "true":
+
+        elif comparison["requires_reconciliation"] and os.getenv("ODRL_AI_RECONCILIATION_ENABLED", "True").lower() == "true":
+
             quality_issues: list[str] = []
             try:
+
+                #
                 reconciled = await reconcile_policy_extractions(
                     policy_text,
                     odrl_rules,

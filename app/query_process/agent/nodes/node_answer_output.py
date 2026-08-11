@@ -335,10 +335,20 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
 
         # Step 4: Publish the answer through the configured non-streaming or
         # SSE channel. Generated streaming deltas are not sent a second time.
+        validated_policy_rules = [
+            dict(rule)
+            for rule in state.get("validated_policy_rules", [])
+            if isinstance(rule, dict)
+        ]
         if is_stream and not answer_was_streamed:
             push_to_session(session_id, SSEEvent.DELTA, {"delta": answer})
         if not is_stream:
             set_task_result(session_id, "answer", answer)
+            set_task_result(
+                session_id,
+                "validated_policy_rules",
+                validated_policy_rules,
+            )
 
         # Step 5: Extract images only from retrieved evidence and expose them
         # through graph state and the terminal streaming event.
@@ -351,6 +361,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
                     "answer": answer,
                     "status": "completed",
                     "image_urls": image_urls,
+                    "validated_policy_rules": validated_policy_rules,
                 },
             )
 
@@ -367,6 +378,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
             ),
             query_key_terms=state.get("query_key_terms", []),
             image_urls=image_urls,
+            validated_policy_rules=validated_policy_rules,
         )
 
         # Step 7: Complete task tracking and return this node's owned fields.
@@ -375,7 +387,11 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
             f">>> [{function_name}] finished: session_id={session_id}, "
             f"answer_characters={len(answer)}, images={len(image_urls)}"
         )
-        return {"answer": answer, "image_urls": image_urls}
+        return {
+            "answer": answer,
+            "image_urls": image_urls,
+            "validated_policy_rules": validated_policy_rules,
+        }
     except Exception:
         logger.exception(
             f">>> [{function_name}] failed: session_id={session_id}"

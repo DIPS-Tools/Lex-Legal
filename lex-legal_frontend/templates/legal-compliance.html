@@ -166,6 +166,65 @@
               </ul>
             </details>
 
+            <section
+              v-if="message.odrlRules?.length"
+              class="odrl-analysis"
+              aria-label="ODRL Analysis"
+            >
+              <header>
+                <div>
+                  <span>Policy structure</span>
+                  <h4>ODRL Analysis</h4>
+                </div>
+                <small>
+                  {{ message.odrlRules.length }}
+                  {{ message.odrlRules.length === 1 ? 'rule' : 'rules' }}
+                </small>
+              </header>
+              <div class="odrl-rule-list">
+                <article
+                  v-for="(rule, ruleIndex) in message.odrlRules"
+                  :key="rule.policy_rule_id || `odrl-rule-${ruleIndex}`"
+                  class="odrl-rule"
+                >
+                  <div class="odrl-rule-heading">
+                    <span
+                      class="odrl-rule-type"
+                      :class="{
+                        permission: rule.rule_type === 'permission',
+                        obligation: rule.rule_type === 'obligation',
+                        prohibition: rule.rule_type === 'prohibition',
+                      }"
+                    >
+                      {{ rule.rule_type || 'rule' }}
+                    </span>
+                    <code>{{ rule.policy_rule_id || `Rule ${ruleIndex + 1}` }}</code>
+                  </div>
+                  <dl>
+                    <div v-if="rule.action">
+                      <dt>Action</dt><dd>{{ rule.action }}</dd>
+                    </div>
+                    <div v-if="rule.asset">
+                      <dt>Asset</dt><dd>{{ rule.asset }}</dd>
+                    </div>
+                    <div v-if="rule.assignee">
+                      <dt>Assignee</dt><dd>{{ rule.assignee }}</dd>
+                    </div>
+                    <div v-if="rule.constraint">
+                      <dt>Constraint</dt><dd>{{ rule.constraint }}</dd>
+                    </div>
+                    <div v-if="rule.purpose">
+                      <dt>Purpose</dt><dd>{{ rule.purpose }}</dd>
+                    </div>
+                  </dl>
+                  <p v-if="rule.source_text" class="odrl-rule-source">
+                    <strong>Source text</strong>
+                    {{ rule.source_text }}
+                  </p>
+                </article>
+              </div>
+            </section>
+
             <div v-if="message.content" class="markdown" v-html="message.html" />
             <div v-else-if="message.pending" class="thinking">
               <span />

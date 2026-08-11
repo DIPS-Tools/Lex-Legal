@@ -10,7 +10,13 @@ from app.query_process.agent.state import create_query_default_state
 from app.utils.path_util import PROJECT_ROOT
 
 from app.utils.task_utils import *
-from app.utils.sse_utils import create_sse_queue, SSEEvent, sse_generator
+from app.utils.sse_utils import (
+    create_sse_queue,
+    get_sse_queue,
+    push_to_session,
+    SSEEvent,
+    sse_generator,
+)
 from app.clients.mongo_utils import (
     clear_history,
     create_conversation,
@@ -98,6 +104,12 @@ async def run_query_graph(query: str, session_id: str, is_stream: bool):
         update_task_status(session_id, "failed", is_stream)
         # Send a typed SSE error event to the active session stream.
         push_to_session(session_id, SSEEvent.ERROR, {"error": str(e)})
+    finally:
+        # Each POST creates one stream lifecycle. Closing it after the terminal
+        # status prevents a completed query's generator from surviving into a
+        # later query that reuses the same conversation session ID.
+        if is_stream:
+            push_to_session(session_id, SSEEvent.CLOSE, {})
 
 
 @query_router.get("/conversations", summary="List conversations")
@@ -167,6 +179,15 @@ async def query(
     query = request.query
     session_id = request.session_id or str(uuid.uuid4())
     is_stream = request.is_stream
+    if is_stream and get_task_status(session_id) == TASK_STATUS_PROCESSING:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A query is already running for this conversation. "
+                "Wait for its response stream to finish before submitting "
+                "another query."
+            ),
+        )
     try:
         await ensure_conversation(
             identity.subject,
@@ -194,6 +215,11 @@ async def query(
         await run_query_graph(query, session_id, is_stream)
         # node_answer_output stores the final non-streaming answer by session.
         answer = get_task_result(session_id,"answer")
+        validated_policy_rules = get_task_result(
+            session_id,
+            "validated_policy_rules",
+            [],
+        )
         logger.info(
             f"Synchronous query completed: session_id={session_id}, "
             f"answer_characters={len(answer)}"
@@ -202,7 +228,8 @@ async def query(
             "answer": answer,
             "session_id": session_id,
             "message": "The query completed successfully.",
-            "done_list": []
+            "done_list": [],
+            "validated_policy_rules": validated_policy_rules,
         }
 
 
@@ -218,6 +245,14 @@ async def stream(
     :return:
     """
     await _require_owned_session(identity, session_id)
+    if get_sse_queue(session_id) is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No active query stream exists for this conversation. "
+                "Submit a streaming query before opening its event stream."
+            ),
+        )
     logger.info(
         f"SSE connection established: session_id={session_id}"
     )

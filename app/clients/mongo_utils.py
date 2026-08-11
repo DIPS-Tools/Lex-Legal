@@ -347,6 +347,7 @@ class HistoryMongoTool:
         rewritten_query: str = "",
         query_key_terms: Sequence[str] | None = None,
         image_urls: list[str] | None = None,
+        validated_policy_rules: Sequence[dict[str, Any]] | None = None,
         message_id: str | None = None,
     ) -> str:
         """
@@ -374,6 +375,11 @@ class HistoryMongoTool:
             "rewritten_query": str(rewritten_query or "").strip(),
             "query_key_terms": self._normalize_string_list(query_key_terms),
             "image_urls": self._normalize_string_list(image_urls),
+            "validated_policy_rules": [
+                dict(rule)
+                for rule in (validated_policy_rules or [])
+                if isinstance(rule, dict)
+            ],
             "ts": datetime.now(timezone.utc),
         }
         collection = self._require_collection()
@@ -625,6 +631,7 @@ async def save_chat_message(
     rewritten_query: str = "",
     query_key_terms: Sequence[str] | None = None,
     image_urls: list | None = None,
+    validated_policy_rules: Sequence[dict[str, Any]] | None = None,
     message_id: str | None = None,
 ) -> str:
     """Compatibility helper for inserting or updating one message."""
@@ -637,6 +644,7 @@ async def save_chat_message(
         rewritten_query=rewritten_query,
         query_key_terms=query_key_terms,
         image_urls=image_urls,
+        validated_policy_rules=validated_policy_rules,
         message_id=message_id,
     )
 

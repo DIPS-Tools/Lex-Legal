@@ -29,10 +29,28 @@ def create_sse_queue(session_id: str) -> "queue.Queue":
     _session_stream[session_id] = q
     return q
 
-def remove_sse_queue(session_id: str):
-    """移除指定 session 的队列"""
+def remove_sse_queue(
+    session_id: str,
+    expected_queue: Optional["queue.Queue"] = None,
+) -> bool:
+    """Remove only the queue owned by the caller.
+
+    A conversation session is reused for multiple queries. An older SSE
+    generator can finish after the next query has already registered a new
+    queue under the same session ID. The identity check prevents that older
+    generator from deleting the replacement queue.
+    """
+    current_queue = _session_stream.get(session_id)
+    if current_queue is None:
+        return False
+    if expected_queue is not None and current_queue is not expected_queue:
+        print(
+            f"[SSE] Keeping replacement queue for session: {session_id}"
+        )
+        return False
     print(f"[SSE] Removing queue for session: {session_id}")
     _session_stream.pop(session_id, None)
+    return True
 
 def _sse_pack(event: str, data: Dict[str, Any]) -> str:
     """打包 SSE 消息格式"""
@@ -105,4 +123,4 @@ async def sse_generator(session_id: str, request: Request):
     finally:
         print(f"[SSE] Generator finished for {session_id}")
         # 清理资源
-        remove_sse_queue(session_id)
+        remove_sse_queue(session_id, stream_queue)

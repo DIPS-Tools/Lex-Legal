@@ -1098,6 +1098,128 @@ a {
   animation: spin 0.8s linear infinite;
 }
 
+.odrl-analysis {
+  margin: 0 0 18px;
+  overflow: hidden;
+  border: 1px solid #d9e5dc;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fbfdfb, #f3f8f5);
+}
+
+.odrl-analysis > header {
+  display: flex;
+  padding: 13px 14px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e2ebe4;
+}
+
+.odrl-analysis > header span {
+  color: #718078;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.odrl-analysis h4 {
+  margin: 2px 0 0;
+  color: #283c32;
+  font-size: 13px;
+}
+
+.odrl-analysis > header small {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #416251;
+  background: #e2f0e7;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.odrl-rule-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.odrl-rule {
+  padding: 12px;
+  border: 1px solid #e1e9e3;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.odrl-rule-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.odrl-rule-heading code {
+  color: #87918b;
+  font-size: 9px;
+}
+
+.odrl-rule-type {
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: #4b5961;
+  background: #e9edf0;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.odrl-rule-type.permission { color: #216343; background: #ddf3e7; }
+.odrl-rule-type.obligation { color: #315d8b; background: #e1edf9; }
+.odrl-rule-type.prohibition { color: #8d3d3d; background: #f8e3e3; }
+
+.odrl-rule dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin: 12px 0 0;
+}
+
+.odrl-rule dl div { min-width: 0; }
+
+.odrl-rule dt {
+  color: #8a938e;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.odrl-rule dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  color: #394740;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.odrl-rule-source {
+  margin: 11px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #edf1ee;
+  color: #657169;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.odrl-rule-source strong {
+  display: block;
+  margin-bottom: 2px;
+  color: #87918b;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
 .answer-images {
   display: grid;
   gap: 10px;

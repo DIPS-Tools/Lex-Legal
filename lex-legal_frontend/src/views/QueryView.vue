@@ -26,6 +26,18 @@ interface ProgressState {
   running: string[]
 }
 
+interface ODRLRule {
+  policy_rule_id?: string
+  source_text?: string
+  assignee?: string
+  action?: string
+  asset?: string
+  rule_type?: string
+  constraint?: string
+  purpose?: string
+  selected_from?: string
+}
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -35,6 +47,7 @@ interface ChatMessage {
   progress?: ProgressState
   error?: string
   imageUrls?: string[]
+  odrlRules?: ODRLRule[]
 }
 
 interface QueryResponse {
@@ -43,6 +56,7 @@ interface QueryResponse {
   done_list?: string[]
   error?: string
   image_urls?: string[]
+  validated_policy_rules?: ODRLRule[]
 }
 
 interface HistoryResponse {
@@ -52,6 +66,7 @@ interface HistoryResponse {
     text: string
     ts?: string | number
     image_urls?: string[]
+    validated_policy_rules?: ODRLRule[]
   }>
 }
 
@@ -175,6 +190,7 @@ const loadHistory = async (targetSessionId = sessionId.value) => {
       content: item.text || '',
       timestamp: item.ts ? new Date(item.ts).getTime() : Date.now(),
       imageUrls: item.image_urls || [],
+      odrlRules: item.validated_policy_rules || [],
     }))
   } catch {
     messages.value = []
@@ -288,13 +304,16 @@ const finishAssistantMessage = (
   startedAt: number,
   error = '',
   imageUrls: string[] = [],
+  odrlRules: ODRLRule[] = [],
+  releaseSending = true,
 ) => {
   message.pending = false
   message.content = answer
   message.error = error
   message.imageUrls = imageUrls
+  if (odrlRules.length) message.odrlRules = odrlRules
   message.progress = progress
-  sending.value = false
+  if (releaseSending) sending.value = false
   updateActivity(
     activityId,
     submittedQuery,
@@ -376,11 +395,19 @@ const openEventStream = async (
           startedAt,
           '',
           payload.image_urls || [],
+          payload.validated_policy_rules || [],
+          false,
         )
       } else if (event === 'error') {
         throw new Error(payload.error || 'The query workflow failed.')
       }
     })
+    if (assistantMessage.pending) {
+      throw new Error(
+        'The response stream closed before the final answer was received.',
+      )
+    }
+    sending.value = false
   } catch (error) {
     if (controller.signal.aborted) return
     finishAssistantMessage(
@@ -481,6 +508,7 @@ const sendQuery = async (suggestion?: string) => {
       startedAt,
       data.error || '',
       data.image_urls || [],
+      data.validated_policy_rules || [],
     )
   } catch (error) {
     finishAssistantMessage(
