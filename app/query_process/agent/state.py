@@ -40,6 +40,19 @@ class ODRLState(TypedDict):
     ]
     serialization_errors: list[str]
 
+    validation_status: Literal[
+        "not_run",
+        "valid",
+        "repaired",
+        "invalid",
+        "error",
+    ]
+    validation_result: dict[str, Any]
+    initial_validation_result: dict[str, Any]
+    original_odrl_document: dict[str, Any] | None
+    validation_repair_attempted: bool
+    validation_errors: list[str]
+
 
 def create_default_odrl_state() -> ODRLState:
     """Return a fresh ODRL state without shared nested mutable values."""
@@ -60,6 +73,12 @@ def create_default_odrl_state() -> ODRLState:
         "llm_latency_ms": 0,
         "serialization_status": "not_requested",
         "serialization_errors": [],
+        "validation_status": "not_run",
+        "validation_result": {},
+        "initial_validation_result": {},
+        "original_odrl_document": None,
+        "validation_repair_attempted": False,
+        "validation_errors": [],
     }
 
 

@@ -1,13 +1,5 @@
 <div class="query-page section-shell">
   <aside class="query-sidebar">
-    <div class="sidebar-brand">
-      <div class="sidebar-brand-mark" aria-hidden="true">§</div>
-      <div>
-        <strong>LexGuard</strong>
-        <span>Legal intelligence</span>
-      </div>
-    </div>
-
     <button
       class="new-conversation-button"
       type="button"
@@ -121,10 +113,10 @@
         class="message-row"
         :class="message.role"
       >
-        <div class="message-avatar">{{ message.role === 'user' ? 'You' : 'LG' }}</div>
+        <div class="message-avatar">{{ message.role === 'user' ? 'You' : 'LL' }}</div>
         <div class="message-body">
           <div class="message-meta">
-            <strong>{{ message.role === 'user' ? 'You' : 'LexGuard' }}</strong>
+            <strong>{{ message.role === 'user' ? 'You' : 'LexLegal' }}</strong>
             <span>{{ formatTime(message.timestamp) }}</span>
           </div>
           <div v-if="message.role === 'user'" class="message-copy">

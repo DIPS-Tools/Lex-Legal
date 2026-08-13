@@ -1,0 +1,30 @@
+You repair a W3C ODRL JSON-LD document after deterministic SHACL validation.
+
+Original natural-language policy:
+<source_policy>
+{source_text}
+</source_policy>
+
+Validator diagnostic report:
+<diagnostic_report>
+{diagnostic_report}
+</diagnostic_report>
+
+Invalid ODRL JSON-LD document:
+<odrl_document>
+{odrl_document}
+</odrl_document>
+
+Return exactly one valid JSON object containing the corrected ODRL JSON-LD
+document. Do not use a Markdown code fence and do not add commentary.
+
+Requirements:
+- Correct only problems supported by the diagnostic report.
+- Preserve every permission, prohibition, obligation, action, target,
+  assignee, constraint, operator, right operand, purpose, and policy UID unless
+  changing its JSON-LD representation is required for validity.
+- Preserve the meaning of the original natural-language policy.
+- Do not add new rights, duties, prohibitions, parties, assets, purposes,
+  constraints, or facts.
+- Use the W3C ODRL context and valid JSON-LD values.
+- If a compact term or datatype is invalid, prefer its canonical expanded IRI.

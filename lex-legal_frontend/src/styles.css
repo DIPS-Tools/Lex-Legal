@@ -462,40 +462,6 @@ a {
   background: #f0f3f7;
 }
 
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 2px 5px 18px;
-}
-
-.sidebar-brand-mark {
-  display: grid;
-  width: 35px;
-  height: 35px;
-  place-items: center;
-  border-radius: 11px;
-  color: #fff;
-  background: linear-gradient(145deg, #3478e8, #7259d8);
-  box-shadow: 0 6px 14px rgba(75, 92, 201, 0.2);
-  font-size: 16px;
-}
-
-.sidebar-brand > div:last-child {
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-brand strong {
-  font-size: 13px;
-}
-
-.sidebar-brand span {
-  margin-top: 2px;
-  color: #8d949e;
-  font-size: 9px;
-}
-
 .sidebar-label {
   color: #8a9098;
   font-size: 9px;

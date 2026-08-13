@@ -1,4 +1,4 @@
-# LexGuard Vue frontend
+# LexLegal Vue frontend
 
 The frontend is a Vue 3 and Vite single-page application with four routes:
 

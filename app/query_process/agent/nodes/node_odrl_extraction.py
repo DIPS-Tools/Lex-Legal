@@ -300,6 +300,12 @@ async def node_odrl_extraction(
             "llm_latency_ms": llm_latency,
             "serialization_status": "not_requested",
             "serialization_errors": [],
+            "validation_status": "not_run",
+            "validation_result": {},
+            "initial_validation_result": {},
+            "original_odrl_document": None,
+            "validation_repair_attempted": False,
+            "validation_errors": [],
         }
 
         add_done_task(session_id, function_name, is_stream)

@@ -78,7 +78,7 @@ router.beforeEach(async (route) => {
 })
 
 router.afterEach((route) => {
-  document.title = `${String(route.meta.title)} | LexGuard`
+  document.title = `${String(route.meta.title)} | LexLegal`
 })
 
 export default router

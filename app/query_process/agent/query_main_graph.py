@@ -397,7 +397,7 @@ async def _manual_test() -> None:
             # {'intent': 'legal_retrieval', 'task_type': 'policy_compliance',
             #  'requested_outputs': {'odrl_analysis': True, 'odrl_document': True, 'compliance_assessment': True}
 
-            "do ODRL analysis if possible: The document may be downloaded once and retained for 30 days for academic research only."
+            "Extract ODRL rules from the policy: The document may be downloaded once and retained for 30 days for academic research only."
         ),
         search_type="hybrid_search",
         is_stream=False,

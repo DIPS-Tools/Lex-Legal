@@ -65,7 +65,7 @@ onUnmounted(() => {
           </svg>
         </span>
         <span>
-          <strong>LexGuard</strong>
+          <strong>LexLegal</strong>
           <small>Legal intelligence workspace</small>
         </span>
       </RouterLink>
