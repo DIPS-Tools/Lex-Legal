@@ -367,7 +367,9 @@ def serialize_odrl_document(
         raise ODRLSerializationError("Every validated policy rule must be an object.")
 
     vocabulary = load_odrl_vocabulary(str(ontology_path))
+    # add an uid for each policy
     uid = _policy_uid(validated_policy_rules, policy_uid)
+
     document: dict[str, Any] = {
         "@context": ODRL_CONTEXT,
         "@type": "Policy",

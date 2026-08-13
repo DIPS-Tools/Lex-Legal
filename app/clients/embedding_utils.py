@@ -4,6 +4,7 @@ import math
 import threading
 import time
 from typing import Any
+import httpx
 
 from huggingface_hub import InferenceClient
 from huggingface_hub.errors import HfHubHTTPError
@@ -50,6 +51,12 @@ class TEIEmbeddings(Embeddings):
             model=self.endpoint_url,
             timeout=timeout,
         )
+
+        self.http_client = httpx.Client(
+            timeout=timeout,
+            headers={"Content-Type": "application/json"},
+        )
+
 
     def _feature_extraction_with_retry(
         self,
@@ -139,6 +146,224 @@ class TEIEmbeddings(Embeddings):
         query_text = f"{self.query_prefix}{text}" if self.query_prefix else text
         return self.embed_documents([query_text])[0]
 
+    def _tei_request(
+            self,
+            method: str,
+            path: str,
+            *,
+            json: dict[str, Any] | None = None,
+            return_text: bool = False,
+    ) -> Any:
+        """Make a direct request to a TEI HTTP endpoint."""
+        url = f"{self.endpoint_url}{path}"
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                with self._request_slots:
+                    response = self.http_client.request(
+                        method=method,
+                        url=url,
+                        json=json,
+                    )
+
+                if (
+                        response.status_code not in {429, 503}
+                        or attempt >= self.max_retries
+                ):
+                    response.raise_for_status()
+                    return response.text if return_text else response.json()
+
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    delay = float(retry_after)
+                except (TypeError, ValueError):
+                    delay = self.retry_base_delay * (2 ** attempt)
+
+                delay = min(delay, self.retry_max_delay)
+
+                logger.warning(
+                    f"TEI returned HTTP {response.status_code}; "
+                    f"retrying in {delay:g}s "
+                    f"(attempt {attempt + 1}/{self.max_retries})."
+                )
+                time.sleep(delay)
+
+            except httpx.HTTPStatusError:
+                raise
+            except httpx.RequestError as exc:
+                if attempt >= self.max_retries:
+                    raise RuntimeError(
+                        f"Could not connect to TEI at {url}"
+                    ) from exc
+
+                delay = min(
+                    self.retry_base_delay * (2 ** attempt),
+                    self.retry_max_delay,
+                )
+                logger.warning(
+                    f"TEI connection failed; retrying in {delay:g}s."
+                )
+                time.sleep(delay)
+
+        raise RuntimeError("TEI request retry loop ended unexpectedly.")
+
+    def info(self) -> dict[str, Any]:
+        """GET /info: return information about the loaded model."""
+        return self._tei_request("GET", "/info")
+
+    def health(self) -> bool:
+        """GET /health: return True when TEI is healthy."""
+        self._tei_request("GET", "/health", return_text=True)
+        return True
+
+    def metrics(self) -> str:
+        """GET /metrics: return Prometheus metrics as text."""
+        return self._tei_request(
+            "GET",
+            "/metrics",
+            return_text=True,
+        )
+
+    def embed_api(
+            self,
+            texts: str | list[str],
+            *,
+            normalize: bool | None = None,
+            truncate: bool | None = None,
+    ) -> list[float] | list[list[float]]:
+        """POST /embed: generate pooled embeddings."""
+        payload = {
+            "inputs": texts,
+            "normalize": (
+                self.normalize if normalize is None else normalize
+            ),
+            "truncate": (
+                self.truncate if truncate is None else truncate
+            ),
+        }
+        return self._tei_request("POST", "/embed", json=payload)
+
+    def openai_embeddings(
+            self,
+            texts: str | list[str],
+            *,
+            model: str = "bge-large-en-v1.5",
+    ) -> dict[str, Any]:
+        """POST /v1/embeddings: use the OpenAI-compatible endpoint."""
+        payload = {
+            "input": texts,
+            "model": model,
+            "encoding_format": "float",
+        }
+        return self._tei_request(
+            "POST",
+            "/v1/embeddings",
+            json=payload,
+        )
+
+    def similarity(
+            self,
+            source_sentence: str,
+            sentences: list[str],
+            *,
+            truncate: bool | None = None,
+    ) -> list[float]:
+        """POST /similarity: compare one sentence with several sentences."""
+        payload = {
+            "inputs": {
+                "source_sentence": source_sentence,
+                "sentences": sentences,
+            },
+            "parameters": {
+                "truncate": (
+                    self.truncate if truncate is None else truncate
+                ),
+            },
+        }
+        return self._tei_request(
+            "POST",
+            "/similarity",
+            json=payload,
+        )
+
+    def tokenize(
+            self,
+            texts: str | list[str],
+            *,
+            add_special_tokens: bool = True,
+    ) -> Any:
+        """POST /tokenize: tokenize one or more strings."""
+        payload = {
+            "inputs": texts,
+            "add_special_tokens": add_special_tokens,
+        }
+        return self._tei_request(
+            "POST",
+            "/tokenize",
+            json=payload,
+        )
+
+    def predict(
+            self,
+            texts: str | list[str],
+            *,
+            truncate: bool | None = None,
+            raw_scores: bool = False,
+    ) -> Any:
+        """
+        POST /predict.
+
+        Requires TEI to be running a sequence-classification model.
+        It will not work with bge-large-en-v1.5.
+        """
+        payload = {
+            "inputs": texts,
+            "truncate": (
+                self.truncate if truncate is None else truncate
+            ),
+            "raw_scores": raw_scores,
+        }
+        return self._tei_request(
+            "POST",
+            "/predict",
+            json=payload,
+        )
+
+    def rerank(
+            self,
+            query: str,
+            texts: list[str],
+            *,
+            truncate: bool | None = None,
+            raw_scores: bool = False,
+            return_text: bool = True,
+    ) -> list[dict[str, Any]]:
+        """
+        POST /rerank.
+
+        Requires a reranker model such as BAAI/bge-reranker-large.
+        It will not work with bge-large-en-v1.5.
+        """
+        payload = {
+            "query": query,
+            "texts": texts,
+            "truncate": (
+                self.truncate if truncate is None else truncate
+            ),
+            "raw_scores": raw_scores,
+            "return_text": return_text,
+        }
+        return self._tei_request(
+            "POST",
+            "/rerank",
+            json=payload,
+        )
+
+    def close(self) -> None:
+        """Close pooled HTTP connections."""
+        self.http_client.close()
+
+
 
 class EmbeddingClientManager:
     """Create and reuse one TEI embedding client."""
@@ -188,8 +413,46 @@ if __name__ == "__main__":
     async def test() -> None:
         embedding_client_manager.init()
         client = embedding_client_manager.get_client()
-        vector = await client.aembed_query("What rights does a data subject have?")
-        print("Dimension:", len(vector))
-        print("First five values:", vector[:5])
+        # vector = await client.aembed_query("What rights does a data subject have?")
+        # texts = "What rights does a data subject have"
+        # vector = await asyncio.to_thread(client.embed_api, texts)
+        #
+        # print("Dimension:", len(vector))
+        # print("First five values:", vector[:5])
+
+
+        #
+        print(client.info())
+        print(client.health())
+        print(client.metrics())
+
+        vectors = client.embed_api([
+            "The first document",
+            "The second document",
+        ])
+
+        scores = client.similarity(
+            "What rights does a data subject have?",
+            [
+                "A data subject has the right of access.",
+                "The weather is sunny today.",
+            ],
+        )
+
+        tokens = client.tokenize(
+            "What rights does a data subject have?"
+        )
+
+        openai_response = client.openai_embeddings([
+            "The first document",
+            "The second document",
+        ])
+
+        print("Vectors:", len(vectors))
+        print("Similarity:", scores)
+        print("Tokens:", tokens)
+        print("OpenAI response:", openai_response)
+
+
 
     asyncio.run(test())
