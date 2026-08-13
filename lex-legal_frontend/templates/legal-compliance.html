@@ -225,6 +225,14 @@
               </div>
             </section>
 
+            <details
+              v-if="message.odrlDocument"
+              class="odrl-document"
+            >
+              <summary>Formal ODRL JSON-LD</summary>
+              <pre>{{ JSON.stringify(message.odrlDocument, null, 2) }}</pre>
+            </details>
+
             <div v-if="message.content" class="markdown" v-html="message.html" />
             <div v-else-if="message.pending" class="thinking">
               <span />

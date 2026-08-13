@@ -335,11 +335,16 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
 
         # Step 4: Publish the answer through the configured non-streaming or
         # SSE channel. Generated streaming deltas are not sent a second time.
+        odrl_state = state.get("odrl_state") or {}
+        raw_policy_rules = odrl_state.get("validated_policy_rules")
+        if not raw_policy_rules and state.get("validated_policy_rules"):
+            raw_policy_rules = state.get("validated_policy_rules", [])
         validated_policy_rules = [
             dict(rule)
-            for rule in state.get("validated_policy_rules", [])
+            for rule in raw_policy_rules
             if isinstance(rule, dict)
         ]
+        odrl_document = odrl_state.get("odrl_document")
         if is_stream and not answer_was_streamed:
             push_to_session(session_id, SSEEvent.DELTA, {"delta": answer})
         if not is_stream:
@@ -349,6 +354,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
                 "validated_policy_rules",
                 validated_policy_rules,
             )
+            set_task_result(session_id, "odrl_document", odrl_document)
 
         # Step 5: Extract images only from retrieved evidence and expose them
         # through graph state and the terminal streaming event.
@@ -362,6 +368,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
                     "status": "completed",
                     "image_urls": image_urls,
                     "validated_policy_rules": validated_policy_rules,
+                    "odrl_document": odrl_document,
                 },
             )
 
@@ -379,6 +386,9 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
             query_key_terms=state.get("query_key_terms", []),
             image_urls=image_urls,
             validated_policy_rules=validated_policy_rules,
+            odrl_document=(
+                odrl_document if isinstance(odrl_document, dict) else None
+            ),
         )
 
         # Step 7: Complete task tracking and return this node's owned fields.
@@ -391,6 +401,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
             "answer": answer,
             "image_urls": image_urls,
             "validated_policy_rules": validated_policy_rules,
+            "odrl_state": odrl_state,
         }
     except Exception:
         logger.exception(

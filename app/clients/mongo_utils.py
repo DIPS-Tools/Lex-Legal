@@ -10,6 +10,7 @@ MongoDBConfig
     -> AsyncIOMotorClient
     -> database
     -> lexlegal_message_history collection
+    -> lexlegal_query_graph_state collection
     -> compound session/time index
 
 Query workflow
@@ -59,9 +60,12 @@ class HistoryMongoTool:
 
     COLLECTION_NAME = "lexlegal_message_history"
     CONVERSATION_COLLECTION_NAME = "lexlegal_conversation_history"
+    QUERY_GRAPH_STATE_COLLECTION_NAME = "lexlegal_query_graph_state"
     HISTORY_INDEX_NAME = "session_id_1_ts_-1"
     CONVERSATION_SESSION_INDEX_NAME = "session_id_1_unique"
     CONVERSATION_OWNER_INDEX_NAME = "owner_id_1_updated_at_-1"
+    QUERY_GRAPH_RUN_INDEX_NAME = "query_run_id_1_unique"
+    QUERY_GRAPH_SESSION_INDEX_NAME = "session_id_1_created_at_-1"
     VALID_ROLES = {"user", "assistant", "system", "tool"}
 
     def __init__(
@@ -74,6 +78,7 @@ class HistoryMongoTool:
         self.db: AsyncIOMotorDatabase | None = None
         self.chat_message: AsyncIOMotorCollection | None = None
         self.chat_conversation: AsyncIOMotorCollection | None = None
+        self.query_graph_state: AsyncIOMotorCollection | None = None
 
     def _get_url(self) -> str:
         """
@@ -115,6 +120,15 @@ class HistoryMongoTool:
             )
         return self.chat_conversation
 
+    def _require_query_graph_state_collection(self) -> AsyncIOMotorCollection:
+        """Return the initialized per-query graph-state collection."""
+        if self.query_graph_state is None:
+            raise RuntimeError(
+                "MongoDB query graph state has not been initialized. "
+                "Call await HistoryMongoTool.init() first."
+            )
+        return self.query_graph_state
+
     async def init(self) -> "HistoryMongoTool":
         """
         Connect to MongoDB and create the history query index.
@@ -143,6 +157,9 @@ class HistoryMongoTool:
             conversation_collection = database[
                 self.CONVERSATION_COLLECTION_NAME
             ]
+            query_graph_state_collection = database[
+                self.QUERY_GRAPH_STATE_COLLECTION_NAME
+            ]
 
             # This compound index matches get_recent_messages(): first filter
             # one session, then read that session's newest timestamps. Naming
@@ -163,6 +180,15 @@ class HistoryMongoTool:
                 [("owner_id", ASCENDING), ("updated_at", DESCENDING)],
                 name=self.CONVERSATION_OWNER_INDEX_NAME,
             )
+            await query_graph_state_collection.create_index(
+                [("query_run_id", ASCENDING)],
+                name=self.QUERY_GRAPH_RUN_INDEX_NAME,
+                unique=True,
+            )
+            await query_graph_state_collection.create_index(
+                [("session_id", ASCENDING), ("created_at", DESCENDING)],
+                name=self.QUERY_GRAPH_SESSION_INDEX_NAME,
+            )
         except Exception:
             client.close()
             logging.exception(
@@ -174,6 +200,7 @@ class HistoryMongoTool:
         self.db = database
         self.chat_message = collection
         self.chat_conversation = conversation_collection
+        self.query_graph_state = query_graph_state_collection
         logging.info(
             "MongoDB conversation history initialized: "
             f"database={self.db_name}, collection={self.COLLECTION_NAME}"
@@ -197,6 +224,7 @@ class HistoryMongoTool:
         self.db = None
         self.chat_message = None
         self.chat_conversation = None
+        self.query_graph_state = None
 
     async def create_conversation(
         self,
@@ -321,7 +349,47 @@ class HistoryMongoTool:
                 "owner_id": self._required_text(owner_id, "owner_id"),
             }
         )
+        await self._require_query_graph_state_collection().delete_many(
+            {"session_id": normalized_session}
+        )
         return int(result.deleted_count)
+
+    async def save_query_graph_state(
+        self,
+        session_id: str,
+        query_run_id: str,
+        query: str,
+        state: dict[str, Any],
+        *,
+        status: str,
+        owner_id: str = "",
+        error: str = "",
+        created_at: datetime | None = None,
+    ) -> str:
+        """Upsert one terminal QueryGraphState snapshot for a query run."""
+        normalized_session = self._required_text(session_id, "session_id")
+        normalized_run = self._required_text(query_run_id, "query_run_id")
+        normalized_status = self._required_text(status, "status")
+        if normalized_status not in {"completed", "failed"}:
+            raise ValueError("status must be 'completed' or 'failed'.")
+        now = datetime.now(timezone.utc)
+        document = {
+            "query_run_id": normalized_run,
+            "session_id": normalized_session,
+            "owner_id": str(owner_id or "").strip(),
+            "query": self._required_text(query, "query"),
+            "status": normalized_status,
+            "error": str(error or "").strip(),
+            "state": self._to_bson_value(state),
+            "created_at": created_at or now,
+            "completed_at": now,
+        }
+        await self._require_query_graph_state_collection().replace_one(
+            {"query_run_id": normalized_run},
+            document,
+            upsert=True,
+        )
+        return normalized_run
 
     async def clear_history(self, session_id: str) -> int:
         """Delete every message belonging to one session."""
@@ -348,6 +416,7 @@ class HistoryMongoTool:
         query_key_terms: Sequence[str] | None = None,
         image_urls: list[str] | None = None,
         validated_policy_rules: Sequence[dict[str, Any]] | None = None,
+        odrl_document: dict[str, Any] | None = None,
         message_id: str | None = None,
     ) -> str:
         """
@@ -380,6 +449,11 @@ class HistoryMongoTool:
                 for rule in (validated_policy_rules or [])
                 if isinstance(rule, dict)
             ],
+            "odrl_document": (
+                dict(odrl_document)
+                if isinstance(odrl_document, dict)
+                else None
+            ),
             "ts": datetime.now(timezone.utc),
         }
         collection = self._require_collection()
@@ -556,6 +630,25 @@ class HistoryMongoTool:
                 serialized[timestamp_field] = timestamp.isoformat()
         return serialized
 
+    @classmethod
+    def _to_bson_value(cls, value: Any) -> Any:
+        """Recursively normalize graph state into BSON-compatible values."""
+        if value is None or isinstance(value, (str, int, float, bool, datetime)):
+            return value
+        if isinstance(value, ObjectId):
+            return str(value)
+        if isinstance(value, dict):
+            return {
+                str(key): cls._to_bson_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [cls._to_bson_value(item) for item in value]
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return cls._to_bson_value(model_dump())
+        return str(value)
+
 
 _history_mongo_tool: HistoryMongoTool | None = None
 _history_mongo_lock = asyncio.Lock()
@@ -632,6 +725,7 @@ async def save_chat_message(
     query_key_terms: Sequence[str] | None = None,
     image_urls: list | None = None,
     validated_policy_rules: Sequence[dict[str, Any]] | None = None,
+    odrl_document: dict[str, Any] | None = None,
     message_id: str | None = None,
 ) -> str:
     """Compatibility helper for inserting or updating one message."""
@@ -645,7 +739,33 @@ async def save_chat_message(
         query_key_terms=query_key_terms,
         image_urls=image_urls,
         validated_policy_rules=validated_policy_rules,
+        odrl_document=odrl_document,
         message_id=message_id,
+    )
+
+
+async def save_query_graph_state(
+    session_id: str,
+    query_run_id: str,
+    query: str,
+    state: dict[str, Any],
+    *,
+    status: str,
+    owner_id: str = "",
+    error: str = "",
+    created_at: datetime | None = None,
+) -> str:
+    """Persist one terminal query graph snapshot with session provenance."""
+    tool = await get_history_mongo_tool()
+    return await tool.save_query_graph_state(
+        session_id=session_id,
+        query_run_id=query_run_id,
+        query=query,
+        state=state,
+        status=status,
+        owner_id=owner_id,
+        error=error,
+        created_at=created_at,
     )
 
 

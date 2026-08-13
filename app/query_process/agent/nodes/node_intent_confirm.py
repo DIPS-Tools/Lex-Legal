@@ -53,7 +53,7 @@ from app.clients.mongo_utils import (
 from app.core.logger import logger
 from app.llm.llm_utils import get_llm_client
 from app.prompt.load_prompt import load_prompt
-from app.query_process.agent.state import QueryGraphState
+from app.query_process.agent.state import QueryGraphState, RequestedOutputs
 from app.utils.task_utils import add_done_task, add_running_task
 
 
@@ -62,7 +62,11 @@ IntentName = Literal[
     "clarification_needed",
     "general_conversation",
 ]
-TaskType = Literal["legal_question", "policy_compliance"]
+TaskType = Literal[
+    "legal_question",
+    "odrl_processing",
+    "policy_compliance",
+]
 
 VALID_INTENTS: set[str] = {
     "legal_retrieval",
@@ -79,6 +83,7 @@ class IntentAnalysis(TypedDict):
 
     intent: IntentName
     task_type: TaskType
+    requested_outputs: RequestedOutputs
     policy_text: str
     query_key_terms: list[str]
     rewritten_query: str
@@ -234,16 +239,37 @@ def _normalize_intent_analysis(
 
     direct_answer = str(raw_result.get("direct_answer") or "").strip()
     raw_task_type = str(raw_result.get("task_type") or "").strip()
-    task_type: TaskType = (
-        "policy_compliance"
-        if intent == "legal_retrieval" and raw_task_type == "policy_compliance"
-        else "legal_question"
-    )
+    task_type: TaskType = "legal_question"
+    if intent == "legal_retrieval" and raw_task_type in {
+        "odrl_processing",
+        "policy_compliance",
+    }:
+        task_type = raw_task_type  # type: ignore[assignment]
+
+    requested_outputs: RequestedOutputs = {
+        "odrl_analysis": task_type in {
+            "odrl_processing",
+            "policy_compliance",
+        },
+        # Every ODRL analysis now includes a machine-readable W3C ODRL
+        # document. Enforce the relationship here even if the model returns
+        # inconsistent requested_outputs.
+        "odrl_document": task_type in {
+            "odrl_processing",
+            "policy_compliance",
+        },
+        "compliance_assessment": task_type == "policy_compliance",
+    }
     policy_text = str(raw_result.get("policy_text") or "").strip()
-    if task_type == "policy_compliance" and not policy_text:
+    if task_type in {"odrl_processing", "policy_compliance"} and not policy_text:
         policy_text = original_query
-    if task_type != "policy_compliance":
+    if task_type not in {"odrl_processing", "policy_compliance"}:
         policy_text = ""
+        requested_outputs = {
+            "odrl_analysis": False,
+            "odrl_document": False,
+            "compliance_assessment": False,
+        }
 
     if intent == "legal_retrieval":
         # An empty answer is the graph's routing signal to continue to search.
@@ -259,6 +285,7 @@ def _normalize_intent_analysis(
     return {
         "intent": intent,
         "task_type": task_type,
+        "requested_outputs": requested_outputs,
         "policy_text": policy_text,
         "query_key_terms": _normalize_query_key_terms(
             raw_result.get("query_key_terms")
@@ -369,6 +396,7 @@ async def node_intent_confirm(state: QueryGraphState) -> dict[str, Any]:
         update: dict[str, Any] = {
             "history": history_chats,
             "task_type": analysis["task_type"],
+            "requested_outputs": analysis["requested_outputs"],
             "policy_text": analysis["policy_text"],
             "query_key_terms": analysis["query_key_terms"],
             "rewritten_query": analysis["rewritten_query"],

@@ -1106,6 +1106,32 @@ a {
   background: linear-gradient(145deg, #fbfdfb, #f3f8f5);
 }
 
+.odrl-document {
+  margin: 0.9rem 0;
+  border: 1px solid rgba(83, 108, 92, 0.24);
+  border-radius: 0.75rem;
+  background: rgba(246, 249, 246, 0.9);
+  overflow: hidden;
+}
+
+.odrl-document summary {
+  padding: 0.75rem 0.9rem;
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--ink-strong, #23352b);
+}
+
+.odrl-document pre {
+  margin: 0;
+  padding: 0.9rem;
+  overflow-x: auto;
+  border-top: 1px solid rgba(83, 108, 92, 0.18);
+  background: rgba(24, 35, 29, 0.96);
+  color: #edf5ef;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
 .odrl-analysis > header {
   display: flex;
   padding: 13px 14px;

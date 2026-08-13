@@ -39,7 +39,10 @@ _NODE_NAME_TO_CN: Dict[str, str] = {
 
     # Legal RAG query workflow.
     "node_intent_confirm": "Understanding query intent",
-    "node_policy_understanding": "Understanding policy rules",
+    "node_odrl_extraction": "Extracting and validating ODRL rules",
+    "node_odrl_serialization": "Serializing formal ODRL JSON-LD",
+    "node_odrl_output": "Preparing ODRL result",
+    "node_policy_understanding": "Understanding policy context",
     "node_compliance_retrieval_plan": "Planning compliance retrieval",
     "node_hybrid_query": "Selecting retrieval strategy",
     "node_embedding_semantic_search": "Searching semantic vectors",

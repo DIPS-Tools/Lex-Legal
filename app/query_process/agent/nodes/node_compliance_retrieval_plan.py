@@ -202,7 +202,10 @@ def node_compliance_retrieval_plan(
     if not policy_text:
         raise ValueError("Compliance retrieval planning requires policy text.")
 
-    raw_rules = state.get("validated_policy_rules", [])
+    odrl_state = state.get("odrl_state") or {}
+    raw_rules = odrl_state.get("validated_policy_rules")
+    if not raw_rules and state.get("validated_policy_rules"):
+        raw_rules = state.get("validated_policy_rules", [])
     if not isinstance(raw_rules, list):
         raise TypeError("validated_policy_rules must be a list.")
     policy_context = state.get("policy_context", {})

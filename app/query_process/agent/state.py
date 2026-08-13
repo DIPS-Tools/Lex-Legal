@@ -1,7 +1,66 @@
 import copy
-from typing import Literal
+from typing import Any, Literal
 
 from typing_extensions import TypedDict
+
+
+class RequestedOutputs(TypedDict):
+    """Presentation and processing outputs requested by the user."""
+
+    odrl_analysis: bool
+    odrl_document: bool
+    compliance_assessment: bool
+
+
+class ODRLState(TypedDict):
+    """Canonical ODRL extraction state owned by the ODRL workflow."""
+
+    source_text: str
+    validated_policy_rules: list[dict[str, Any]]
+    odrl_document: dict[str, Any] | None
+
+    endpoint_rules: list[dict[str, Any]]
+    independent_ai_rules: list[dict[str, Any]]
+    comparison: dict[str, Any]
+    extracted_policy_context: dict[str, Any]
+    extraction_errors: list[str]
+
+    extraction_id: str
+    reconciliation_method: str
+    reconciliation_error: str
+    audit_log_path: str
+    endpoint_latency_ms: int
+    llm_latency_ms: int
+
+    serialization_status: Literal[
+        "not_requested",
+        "not_implemented",
+        "generated",
+        "validation_failed",
+    ]
+    serialization_errors: list[str]
+
+
+def create_default_odrl_state() -> ODRLState:
+    """Return a fresh ODRL state without shared nested mutable values."""
+    return {
+        "source_text": "",
+        "validated_policy_rules": [],
+        "odrl_document": None,
+        "endpoint_rules": [],
+        "independent_ai_rules": [],
+        "comparison": {},
+        "extracted_policy_context": {},
+        "extraction_errors": [],
+        "extraction_id": "",
+        "reconciliation_method": "",
+        "reconciliation_error": "",
+        "audit_log_path": "",
+        "endpoint_latency_ms": 0,
+        "llm_latency_ms": 0,
+        "serialization_status": "not_requested",
+        "serialization_errors": [],
+    }
 
 
 class QueryGraphState(TypedDict):
@@ -15,12 +74,19 @@ class QueryGraphState(TypedDict):
     from attempting to update the same state key.
     """
     session_id: str
+    query_run_id: str
     original_query: str
 
     # Intent classification and optional policy-understanding results.
-    task_type: Literal["legal_question", "policy_compliance"]
+    task_type: Literal[
+        "legal_question",
+        "odrl_processing",
+        "policy_compliance",
+    ]
+    requested_outputs: RequestedOutputs
     # pure the policy state, removing question description
     policy_text: str
+    odrl_state: ODRLState
     
     odrl_extracted_rules: list[dict]
     llm_extracted_rules: list[dict]
@@ -70,9 +136,16 @@ class QueryGraphState(TypedDict):
 # ========================
 query_graph_default_state: QueryGraphState = {
     "session_id": "",
+    "query_run_id": "",
     "original_query": "",
     "task_type": "legal_question",
+    "requested_outputs": {
+        "odrl_analysis": False,
+        "odrl_document": False,
+        "compliance_assessment": False,
+    },
     "policy_text": "",
+    "odrl_state": create_default_odrl_state(),
     "odrl_extracted_rules": [],
     "llm_extracted_rules": [],
     "policy_extraction_comparison": {},
