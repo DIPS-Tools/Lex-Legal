@@ -254,7 +254,7 @@ def _normalize_intent_analysis(
         # Every ODRL analysis now includes a machine-readable W3C ODRL
         # document. Enforce the relationship here even if the model returns
         # inconsistent requested_outputs.
-        "odrl_document": task_type in {
+        "odrl_jsonld_document": task_type in {
             "odrl_processing",
             "policy_compliance",
         },
@@ -267,7 +267,7 @@ def _normalize_intent_analysis(
         policy_text = ""
         requested_outputs = {
             "odrl_analysis": False,
-            "odrl_document": False,
+            "odrl_jsonld_document": False,
             "compliance_assessment": False,
         }
 

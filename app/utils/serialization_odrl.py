@@ -298,18 +298,43 @@ def _policy_uid(rules: list[dict[str, Any]], supplied_uid: str | None) -> str:
     return f"urn:lexlegal:policy:{hashlib.sha256(canonical.encode()).hexdigest()}"
 
 
-def validate_odrl_document(
+def validate_serialized_odrl_structure(
     document: dict[str, Any],
     *,
     ontology_path: str | Path = DEFAULT_ONTOLOGY_PATH,
 ) -> None:
-    """Validate the structural subset produced by this serializer."""
+    """Validate the structural subset produced by this serializer.
+
+        Its purpose is to ensure the serializer did not generate an obviously malformed document before it is placed into ODRLState or sent to the external ODRL Engine.
+
+          It currently checks:
+              - @context is the expected ODRL context.
+              - @type is Policy or Set.
+              - The policy has an absolute IRI uid.
+              - At least one permission, prohibition, or obligation exists.
+              - Each rule is an object.
+              - Actions exist in the loaded ODRL vocabulary.
+              - Permissions and prohibitions have a target IRI.
+              - uid, target, and assignee are absolute IRIs.
+              - Constraints use known left operands and operators.
+              - Every constraint has a rightOperand.
+
+      - validate_serialized_odrl_structure() checks the limited document format produced by our serializer.
+            It is fast, local, and does not require the ODRL Engine service.
+      - validate_odrl_policy() performs authoritative, more comprehensive ODRL/RDF/SHACL validation through the external ODRL Engine.
+
+      So it is not intended to replace ODRL Engine validation. It catches implementation and serialization problems early—for example, a missing target or unsupported action—while the engine checks broader standards compliance.
+
+    """
     vocabulary = load_odrl_vocabulary(str(ontology_path))
+
     if document.get("@context") != ODRL_CONTEXT:
         raise ODRLSerializationError("ODRL document has an invalid @context.")
     if document.get("@type") not in {"Policy", "Set"}:
         raise ODRLSerializationError("ODRL document must be a Policy or Set.")
+
     uid = document.get("uid")
+
     if not isinstance(uid, str) or not _is_absolute_iri(uid):
         raise ODRLSerializationError("ODRL Policy requires one IRI uid.")
 
@@ -329,6 +354,7 @@ def validate_odrl_document(
                 raise ODRLSerializationError(
                     f"Every {property_name} requires one target IRI."
                 )
+
             for iri_field in ("uid", "target", "assignee"):
                 value = rule.get(iri_field)
                 if value is not None and (
@@ -358,7 +384,10 @@ def serialize_odrl_document(
     policy_uid: str | None = None,
     ontology_path: str | Path = DEFAULT_ONTOLOGY_PATH,
 ) -> dict[str, Any]:
-    """Convert atomic validated rules to a validated ODRL 2.2 JSON-LD Policy."""
+    """
+        Convert atomic validated rules to a validated ODRL 2.2 JSON-LD Policy.
+    """
+
     if not isinstance(validated_policy_rules, list) or not validated_policy_rules:
         raise ODRLSerializationError(
             "At least one validated policy rule is required for serialization."
@@ -414,5 +443,5 @@ def serialize_odrl_document(
             serialized_rule["constraint"] = constraints
         document.setdefault(property_name, []).append(serialized_rule)
 
-    validate_odrl_document(document, ontology_path=ontology_path)
+    validate_serialized_odrl_structure(document, ontology_path=ontology_path)
     return document

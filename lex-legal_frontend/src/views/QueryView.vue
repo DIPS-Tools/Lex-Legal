@@ -48,7 +48,7 @@ interface ChatMessage {
   error?: string
   imageUrls?: string[]
   odrlRules?: ODRLRule[]
-  odrlDocument?: Record<string, unknown> | null
+  odrlJsonldDocument?: Record<string, unknown> | null
 }
 
 interface QueryResponse {
@@ -58,7 +58,7 @@ interface QueryResponse {
   error?: string
   image_urls?: string[]
   validated_policy_rules?: ODRLRule[]
-  odrl_document?: Record<string, unknown> | null
+  odrl_jsonld_document?: Record<string, unknown> | null
 }
 
 interface HistoryResponse {
@@ -69,6 +69,8 @@ interface HistoryResponse {
     ts?: string | number
     image_urls?: string[]
     validated_policy_rules?: ODRLRule[]
+    odrl_jsonld_document?: Record<string, unknown> | null
+    // Read-only compatibility for conversations saved before the rename.
     odrl_document?: Record<string, unknown> | null
   }>
 }
@@ -194,7 +196,9 @@ const loadHistory = async (targetSessionId = sessionId.value) => {
       timestamp: item.ts ? new Date(item.ts).getTime() : Date.now(),
       imageUrls: item.image_urls || [],
       odrlRules: item.validated_policy_rules || [],
-      odrlDocument: item.odrl_document || null,
+      odrlJsonldDocument: (
+        item.odrl_jsonld_document || item.odrl_document || null
+      ),
     }))
   } catch {
     messages.value = []
@@ -309,7 +313,7 @@ const finishAssistantMessage = (
   error = '',
   imageUrls: string[] = [],
   odrlRules: ODRLRule[] = [],
-  odrlDocument: Record<string, unknown> | null = null,
+  odrlJsonldDocument: Record<string, unknown> | null = null,
   releaseSending = true,
 ) => {
   message.pending = false
@@ -317,7 +321,9 @@ const finishAssistantMessage = (
   message.error = error
   message.imageUrls = imageUrls
   if (odrlRules.length) message.odrlRules = odrlRules
-  if (odrlDocument) message.odrlDocument = odrlDocument
+  if (odrlJsonldDocument) {
+    message.odrlJsonldDocument = odrlJsonldDocument
+  }
   message.progress = progress
   if (releaseSending) sending.value = false
   updateActivity(
@@ -402,7 +408,7 @@ const openEventStream = async (
           '',
           payload.image_urls || [],
           payload.validated_policy_rules || [],
-          payload.odrl_document || null,
+          payload.odrl_jsonld_document || null,
           false,
         )
       } else if (event === 'error') {
@@ -516,7 +522,7 @@ const sendQuery = async (suggestion?: string) => {
       data.error || '',
       data.image_urls || [],
       data.validated_policy_rules || [],
-      data.odrl_document || null,
+      data.odrl_jsonld_document || null,
     )
   } catch (error) {
     finishAssistantMessage(

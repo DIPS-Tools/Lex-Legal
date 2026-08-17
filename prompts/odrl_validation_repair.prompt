@@ -11,9 +11,9 @@ Validator diagnostic report:
 </diagnostic_report>
 
 Invalid ODRL JSON-LD document:
-<odrl_document>
-{odrl_document}
-</odrl_document>
+<odrl_jsonld_document>
+{odrl_jsonld_document}
+</odrl_jsonld_document>
 
 Return exactly one valid JSON object containing the corrected ODRL JSON-LD
 document. Do not use a Markdown code fence and do not add commentary.

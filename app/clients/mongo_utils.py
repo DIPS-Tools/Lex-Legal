@@ -416,7 +416,7 @@ class HistoryMongoTool:
         query_key_terms: Sequence[str] | None = None,
         image_urls: list[str] | None = None,
         validated_policy_rules: Sequence[dict[str, Any]] | None = None,
-        odrl_document: dict[str, Any] | None = None,
+        odrl_jsonld_document: dict[str, Any] | None = None,
         message_id: str | None = None,
     ) -> str:
         """
@@ -449,9 +449,9 @@ class HistoryMongoTool:
                 for rule in (validated_policy_rules or [])
                 if isinstance(rule, dict)
             ],
-            "odrl_document": (
-                dict(odrl_document)
-                if isinstance(odrl_document, dict)
+            "odrl_jsonld_document": (
+                dict(odrl_jsonld_document)
+                if isinstance(odrl_jsonld_document, dict)
                 else None
             ),
             "ts": datetime.now(timezone.utc),
@@ -622,6 +622,15 @@ class HistoryMongoTool:
     def _serialize_document(document: dict[str, Any]) -> dict[str, Any]:
         """Convert BSON-only values into FastAPI JSON-compatible values."""
         serialized = dict(document)
+        # Read-side migration for chat messages saved before the JSON-LD field
+        # was renamed. New API responses expose only the canonical name.
+        if (
+            "odrl_jsonld_document" not in serialized
+            and "odrl_document" in serialized
+        ):
+            serialized["odrl_jsonld_document"] = serialized.pop(
+                "odrl_document"
+            )
         if "_id" in serialized:
             serialized["_id"] = str(serialized["_id"])
         for timestamp_field in ("ts", "created_at", "updated_at"):
@@ -725,7 +734,7 @@ async def save_chat_message(
     query_key_terms: Sequence[str] | None = None,
     image_urls: list | None = None,
     validated_policy_rules: Sequence[dict[str, Any]] | None = None,
-    odrl_document: dict[str, Any] | None = None,
+    odrl_jsonld_document: dict[str, Any] | None = None,
     message_id: str | None = None,
 ) -> str:
     """Compatibility helper for inserting or updating one message."""
@@ -739,7 +748,7 @@ async def save_chat_message(
         query_key_terms=query_key_terms,
         image_urls=image_urls,
         validated_policy_rules=validated_policy_rules,
-        odrl_document=odrl_document,
+        odrl_jsonld_document=odrl_jsonld_document,
         message_id=message_id,
     )
 

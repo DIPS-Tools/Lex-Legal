@@ -87,11 +87,13 @@ async def run_query_graph(
     query_run_id: str | None = None,
     owner_id: str = "",
 ) -> str:
+
     # A session ID represents a conversation and is intentionally reused for
     # follow-up questions. Task progress, however, belongs to one query only.
     # Clear the previous query's running/done lists and cached result before
     # publishing the new processing state; MongoDB conversation history is not
     # affected by this in-memory reset.
+
     clear_task(session_id)
     update_task_status(session_id, "processing", is_stream)
 
@@ -270,7 +272,11 @@ async def query(
             "validated_policy_rules",
             [],
         )
-        odrl_document = get_task_result(session_id, "odrl_document", None)
+        odrl_jsonld_document = get_task_result(
+            session_id,
+            "odrl_jsonld_document",
+            None,
+        )
         logger.info(
             f"Synchronous query completed: session_id={session_id}, "
             f"answer_characters={len(answer)}"
@@ -282,7 +288,7 @@ async def query(
             "message": "The query completed successfully.",
             "done_list": [],
             "validated_policy_rules": validated_policy_rules,
-            "odrl_document": odrl_document,
+            "odrl_jsonld_document": odrl_jsonld_document,
         }
 
 

@@ -8,7 +8,7 @@ class RequestedOutputs(TypedDict):
     """Presentation and processing outputs requested by the user."""
 
     odrl_analysis: bool
-    odrl_document: bool
+    odrl_jsonld_document: bool
     compliance_assessment: bool
 
 
@@ -17,7 +17,7 @@ class ODRLState(TypedDict):
 
     source_text: str
     validated_policy_rules: list[dict[str, Any]]
-    odrl_document: dict[str, Any] | None
+    odrl_jsonld_document: dict[str, Any] | None
 
     endpoint_rules: list[dict[str, Any]]
     independent_ai_rules: list[dict[str, Any]]
@@ -49,7 +49,7 @@ class ODRLState(TypedDict):
     ]
     validation_result: dict[str, Any]
     initial_validation_result: dict[str, Any]
-    original_odrl_document: dict[str, Any] | None
+    original_odrl_jsonld_document: dict[str, Any] | None
     validation_repair_attempted: bool
     validation_errors: list[str]
 
@@ -59,7 +59,7 @@ def create_default_odrl_state() -> ODRLState:
     return {
         "source_text": "",
         "validated_policy_rules": [],
-        "odrl_document": None,
+        "odrl_jsonld_document": None,
         "endpoint_rules": [],
         "independent_ai_rules": [],
         "comparison": {},
@@ -76,7 +76,7 @@ def create_default_odrl_state() -> ODRLState:
         "validation_status": "not_run",
         "validation_result": {},
         "initial_validation_result": {},
-        "original_odrl_document": None,
+        "original_odrl_jsonld_document": None,
         "validation_repair_attempted": False,
         "validation_errors": [],
     }
@@ -160,7 +160,7 @@ query_graph_default_state: QueryGraphState = {
     "task_type": "legal_question",
     "requested_outputs": {
         "odrl_analysis": False,
-        "odrl_document": False,
+        "odrl_jsonld_document": False,
         "compliance_assessment": False,
     },
     "policy_text": "",

@@ -267,7 +267,11 @@ def validate_policy_context_evidence(
     context: dict[str, Any],
     policy_text: str,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Remove context values whose claimed evidence is absent from the policy."""
+
+    """
+        Remove context values whose claimed evidence is absent from the policy.
+    """
+
     validated: dict[str, Any] = {}
     warnings: list[str] = []
     for field in CONTEXT_FIELDS:
@@ -314,10 +318,15 @@ async def extract_policy_independently_with_ai(
     policy_text: str,
 ) -> dict[str, Any]:
     """Extract rules and context without exposing the ODRL prediction."""
+
     prompt = load_prompt("policy_understanding", policy_text=policy_text)
+
     model = get_llm_client(json_mode=True)
+
     response = await model.ainvoke([HumanMessage(content=prompt)])
+
     parsed = _parse_json_object(response.content, "Independent policy AI")
+
     return {
         "rules": normalize_policy_rules(parsed.get("rules")),
         "policy_context": normalize_policy_context(
@@ -862,6 +871,7 @@ async def node_policy_understanding(
     This node consumes its canonical ``odrl_state`` and prepares only the
     broader policy context required by compliance retrieval and assessment.
     """
+
     function_name = sys._getframe().f_code.co_name
     session_id = str(state.get("session_id") or "").strip()
     is_stream = bool(state.get("is_stream", False))
@@ -872,16 +882,21 @@ async def node_policy_understanding(
         raise ValueError("node_policy_understanding requires a session_id.")
     if not policy_text:
         raise ValueError("node_policy_understanding requires policy text.")
+
     odrl_state = state.get("odrl_state") or {}
+
     rules = list(odrl_state.get("validated_policy_rules") or [])
+
     if not rules and state.get("validated_policy_rules"):
         rules = list(state["validated_policy_rules"])
+
     if not odrl_state or not odrl_state.get("source_text"):
         raise ValueError(
             "node_policy_understanding must run after node_odrl_extraction."
         )
 
     add_running_task(session_id, function_name, is_stream)
+
     logger.info(
         f">>> [{function_name}] started: session_id={session_id}, "
         f"validated_rules={len(rules)}"
@@ -890,6 +905,7 @@ async def node_policy_understanding(
     raw_context = normalize_policy_context(
         odrl_state.get("extracted_policy_context")
     )
+
     policy_context, context_warnings = validate_policy_context_evidence(
         raw_context,
         policy_text,

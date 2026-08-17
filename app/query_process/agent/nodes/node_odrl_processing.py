@@ -49,7 +49,7 @@ def _parse_json_document(content: Any) -> dict[str, Any]:
     return parsed
 
 
-async def repair_odrl_document_with_ai(
+async def repair_odrl_jsonld_document_with_ai(
     document: dict[str, Any],
     diagnostic_report: str,
     *,
@@ -60,7 +60,9 @@ async def repair_odrl_document_with_ai(
         "odrl_validation_repair",
         source_text=source_text,
         diagnostic_report=diagnostic_report,
-        odrl_document=json.dumps(document, ensure_ascii=False, indent=2),
+        odrl_jsonld_document=json.dumps(
+            document, ensure_ascii=False, indent=2
+        ),
     )
     model = get_llm_client(json_mode=True)
     response = await model.ainvoke([HumanMessage(content=prompt)])
@@ -76,7 +78,7 @@ async def node_odrl_processing(state: QueryGraphState) -> dict[str, Any]:
         raise ValueError("node_odrl_processing requires a session_id.")
 
     current = dict(state.get("odrl_state") or {})
-    document = current.get("odrl_document")
+    document = current.get("odrl_jsonld_document")
     if not isinstance(document, dict) or not document:
         current.update(
             validation_status="error",
@@ -84,12 +86,13 @@ async def node_odrl_processing(state: QueryGraphState) -> dict[str, Any]:
             initial_validation_result={},
             validation_repair_attempted=False,
             validation_errors=[
-                "ODRL validation requires a serialized odrl_document."
+                "ODRL validation requires a serialized "
+                "odrl_jsonld_document."
             ],
         )
         logger.warning(
             f">>> [{function_name}] skipped: session_id={session_id}, "
-            "reason=missing odrl_document"
+            "reason=missing odrl_jsonld_document"
         )
         return {"odrl_state": cast(ODRLState, current)}
 
@@ -97,6 +100,7 @@ async def node_odrl_processing(state: QueryGraphState) -> dict[str, Any]:
 
     try:
         # one of processing functions, avalidate_odrl_policy
+        #   - validate_odrl_policy() performs authoritative, more comprehensive ODRL/RDF/SHACL validation through the external ODRL Engine.
         initial_result = await avalidate_odrl_policy(document)
         current.update(
             initial_validation_result=dict(initial_result),
@@ -107,18 +111,18 @@ async def node_odrl_processing(state: QueryGraphState) -> dict[str, Any]:
         if initial_result["valid"]:
             current.update(
                 validation_status="valid",
-                original_odrl_document=None,
+                original_odrl_jsonld_document=None,
                 validation_repair_attempted=False,
             )
         else:
-            # Keep the original for auditing. Only replace odrl_document after
-            # the repaired candidate passes the same external validator.
+            # Keep the original for auditing. Only replace the JSON-LD
+            # document after the repaired candidate passes validation.
             current.update(
                 validation_status="invalid",
-                original_odrl_document=dict(document),
+                original_odrl_jsonld_document=dict(document),
                 validation_repair_attempted=True,
             )
-            repaired = await repair_odrl_document_with_ai(
+            repaired = await repair_odrl_jsonld_document_with_ai(
                 document,
                 initial_result["diagnostic_report"],
                 source_text=str(current.get("source_text") or ""),
@@ -127,7 +131,7 @@ async def node_odrl_processing(state: QueryGraphState) -> dict[str, Any]:
             current["validation_result"] = dict(repaired_result)
             if repaired_result["valid"]:
                 current.update(
-                    odrl_document=repaired,
+                    odrl_jsonld_document=repaired,
                     validation_status="repaired",
                 )
             else:

@@ -39,10 +39,12 @@ from app.utils.task_utils import add_done_task, add_running_task
 async def node_odrl_extraction(
     state: QueryGraphState,
 ) -> dict[str, Any]:
+
     """Extract, compare, reconcile, validate, and audit policy rules."""
     function_name = sys._getframe().f_code.co_name
     session_id = str(state.get("session_id") or "").strip()
     is_stream = bool(state.get("is_stream", False))
+
     policy_text = str(
         state.get("policy_text") or state.get("original_query") or ""
     ).strip()
@@ -65,14 +67,15 @@ async def node_odrl_extraction(
     )
 
     try:
+        # call the API extracting the ODRL components
         endpoint_call = _timed_call(aextract_odrl_components(policy_text))
+        # using AI model to extracting ODRL components, also extracting policy-context
         independent_ai_call = _timed_call(
             extract_policy_independently_with_ai(policy_text)
         )
+        # parallel calling
         endpoint_timed, independent_ai_timed = await asyncio.gather(
-            endpoint_call,
-            independent_ai_call,
-        )
+            endpoint_call, independent_ai_call,)
 
         endpoint_result, endpoint_error, endpoint_latency = endpoint_timed
         ai_result, ai_error, llm_latency = independent_ai_timed
@@ -101,7 +104,7 @@ async def node_odrl_extraction(
             raw_policy_context,
             policy_text,
         )
-
+        # compare endpoint extracted rules and AI-extracted rules
         comparison = compare_policy_extractions(
             endpoint_rules,
             independent_ai_rules,
@@ -154,10 +157,13 @@ async def node_odrl_extraction(
                         "Reconciliation quality validation failed: "
                         + " | ".join(quality_issues)
                     )
+                # valid rules combining two extracted results
                 validated_rules = reconciled
+
                 selected_from = "ai_reconciliation"
                 reconciliation_method = "ai_reconciliation"
             except Exception as exc:
+
                 reconciliation_error = f"{type(exc).__name__}: {exc}"
                 comparison["review_required"] = True
                 validated_rules = (
@@ -282,11 +288,12 @@ async def node_odrl_extraction(
             raise RuntimeError(
                 "Both policy extractors failed: " + " | ".join(errors)
             )
-
+        # odrl_state, saving all related with ODRL
         odrl_state: ODRLState = {
             "source_text": policy_text,
             "validated_policy_rules": final_rules,
-            "odrl_document": None,
+            # Placeholder populated by node_odrl_serialization.
+            "odrl_jsonld_document": None,
             "endpoint_rules": endpoint_rules,
             "independent_ai_rules": independent_ai_rules,
             "comparison": comparison,
@@ -303,7 +310,7 @@ async def node_odrl_extraction(
             "validation_status": "not_run",
             "validation_result": {},
             "initial_validation_result": {},
-            "original_odrl_document": None,
+            "original_odrl_jsonld_document": None,
             "validation_repair_attempted": False,
             "validation_errors": [],
         }

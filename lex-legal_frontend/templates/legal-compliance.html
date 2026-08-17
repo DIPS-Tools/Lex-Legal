@@ -218,11 +218,11 @@
             </section>
 
             <details
-              v-if="message.odrlDocument"
+              v-if="message.odrlJsonldDocument"
               class="odrl-document"
             >
               <summary>Formal ODRL JSON-LD</summary>
-              <pre>{{ JSON.stringify(message.odrlDocument, null, 2) }}</pre>
+              <pre>{{ JSON.stringify(message.odrlJsonldDocument, null, 2) }}</pre>
             </details>
 
             <div v-if="message.content" class="markdown" v-html="message.html" />

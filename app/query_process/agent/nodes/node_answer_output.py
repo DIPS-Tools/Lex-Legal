@@ -344,7 +344,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
             for rule in raw_policy_rules
             if isinstance(rule, dict)
         ]
-        odrl_document = odrl_state.get("odrl_document")
+        odrl_jsonld_document = odrl_state.get("odrl_jsonld_document")
         if is_stream and not answer_was_streamed:
             push_to_session(session_id, SSEEvent.DELTA, {"delta": answer})
         if not is_stream:
@@ -354,7 +354,11 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
                 "validated_policy_rules",
                 validated_policy_rules,
             )
-            set_task_result(session_id, "odrl_document", odrl_document)
+            set_task_result(
+                session_id,
+                "odrl_jsonld_document",
+                odrl_jsonld_document,
+            )
 
         # Step 5: Extract images only from retrieved evidence and expose them
         # through graph state and the terminal streaming event.
@@ -368,7 +372,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
                     "status": "completed",
                     "image_urls": image_urls,
                     "validated_policy_rules": validated_policy_rules,
-                    "odrl_document": odrl_document,
+                    "odrl_jsonld_document": odrl_jsonld_document,
                 },
             )
 
@@ -386,8 +390,10 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
             query_key_terms=state.get("query_key_terms", []),
             image_urls=image_urls,
             validated_policy_rules=validated_policy_rules,
-            odrl_document=(
-                odrl_document if isinstance(odrl_document, dict) else None
+            odrl_jsonld_document=(
+                odrl_jsonld_document
+                if isinstance(odrl_jsonld_document, dict)
+                else None
             ),
         )
 

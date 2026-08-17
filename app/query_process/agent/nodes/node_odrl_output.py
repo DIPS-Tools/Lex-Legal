@@ -94,7 +94,7 @@ async def node_odrl_output(state: QueryGraphState) -> dict[str, Any]:
         for rule in odrl_state.get("validated_policy_rules", [])
         if isinstance(rule, dict)
     ]
-    document = odrl_state.get("odrl_document")
+    document = odrl_state.get("odrl_jsonld_document")
     status = str(odrl_state.get("serialization_status") or "not_requested")
     errors = [str(item) for item in odrl_state.get("serialization_errors", [])]
     validation_status = str(odrl_state.get("validation_status") or "not_run")
@@ -122,13 +122,13 @@ async def node_odrl_output(state: QueryGraphState) -> dict[str, Any]:
                 "status": "completed",
                 "image_urls": [],
                 "validated_policy_rules": rules,
-                "odrl_document": document,
+                "odrl_jsonld_document": document,
             },
         )
     else:
         set_task_result(session_id, "answer", answer)
         set_task_result(session_id, "validated_policy_rules", rules)
-        set_task_result(session_id, "odrl_document", document)
+        set_task_result(session_id, "odrl_jsonld_document", document)
 
     await save_chat_message(
         session_id=session_id,
@@ -138,7 +138,9 @@ async def node_odrl_output(state: QueryGraphState) -> dict[str, Any]:
         query_key_terms=state.get("query_key_terms", []),
         image_urls=[],
         validated_policy_rules=rules,
-        odrl_document=document if isinstance(document, dict) else None,
+        odrl_jsonld_document=(
+            document if isinstance(document, dict) else None
+        ),
     )
     add_done_task(session_id, function_name, is_stream)
     logger.info(
