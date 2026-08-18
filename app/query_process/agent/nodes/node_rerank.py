@@ -48,11 +48,11 @@ from app.utils.task_utils import add_done_task, add_running_task
 
 # Score no more than this many final records in the answer context. RRF already
 # limits hybrid local candidates, while network fallback may add more records.
-RERANK_MAX_TOP_K = 5
+RERANK_MAX_TOP_K = 10
 
 # Keep at least three records when available before applying a score-gap cutoff.
 # Legal answers often need neighboring provisions or more than one authority.
-RERANK_MIN_TOP_K = 2
+RERANK_MIN_TOP_K = 5
 
 # After the minimum result count, stop when neighboring normalized scores show
 # either a large absolute drop or a large drop relative to the higher score.

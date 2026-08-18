@@ -49,7 +49,7 @@ RRF_RANK_CONSTANT = 60
 
 # Only the highest fused candidates proceed to the more expensive cross-encoder
 # reranker. Retrieval nodes currently fetch up to twenty candidates per source.
-RRF_TOP_K = 6
+RRF_TOP_K = 10
 
 # Equal weights treat semantic and lexical rankings as equally important. These
 # values can later be tuned from evaluation data without changing the formula.
