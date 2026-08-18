@@ -17,23 +17,28 @@ node_intent_confirm
   |
   |-- ordinary legal retrieval ----------------------> node_hybrid_query
   |
-  |-- ODRL processing ---------.
-  |                            |
-  `-- policy compliance -------+--> node_odrl_extraction
-                                      |
-                                      v
-                           node_odrl_serialization
-                                      |                  |
-                           ODRL only -'              `- compliance
-                                      |                  |
-                                      v                  v
-                           node_odrl_processing node_policy_understanding
-                                      |                  |
-                                      v                  |
-                              node_odrl_output           |
-                                                         |
-                                                         v
-                                              node_compliance_retrieval_plan
+  |-- policy compliance without ODRL ------> node_policy_understanding
+  |                                                   |
+  |                                                   v
+  |                                      node_compliance_retrieval_plan
+  |
+  |-- ODRL processing -------------------.
+  |                                      |
+  `-- policy compliance plus ODRL -------+--> node_odrl_extraction
+                                                   |
+                                                   v
+                                        node_odrl_serialization
+                                                   |
+                                                   v
+                                          node_odrl_processing
+                                             |             |
+                                  ODRL only -'             `- compliance
+                                             |             |
+                                             v             v
+                                    node_odrl_output  node_policy_understanding
+                                                               |
+                                                               v
+                                                    node_compliance_retrieval_plan
                                                           |
                                                           v
                                   node_hybrid_query  (search-strategy selection)
@@ -74,11 +79,12 @@ flowchart TD
     START([START]) --> Intent[node_intent_confirm]
     Intent -->|direct answer| Answer[node_answer_output]
     Intent -->|ordinary legal question| Strategy[node_hybrid_query]
-    Intent -->|ODRL or policy compliance| ODRL[node_odrl_extraction]
+    Intent -->|compliance only| Policy[node_policy_understanding]
+    Intent -->|ODRL processing or compliance plus ODRL| ODRL[node_odrl_extraction]
     ODRL --> Serialize[node_odrl_serialization]
-    Serialize -->|ODRL only| ODRLProcess[node_odrl_processing]
-    ODRLProcess --> ODRLOut[node_odrl_output]
-    Serialize -->|policy compliance| Policy
+    Serialize --> ODRLProcess[node_odrl_processing]
+    ODRLProcess -->|ODRL only| ODRLOut[node_odrl_output]
+    ODRLProcess -->|policy compliance| Policy
     ODRLOut --> END
     Policy --> Plan[node_compliance_retrieval_plan]
     Plan --> Strategy
@@ -174,19 +180,45 @@ def route_after_intent_confirm(state: QueryGraphState) -> str:
     cases that do not need legal evidence, such as greetings, unsupported
     requests, or a clarification question. Substantive legal questions should
     continue to the search-strategy node.
+
+     The four outgoing paths are:
+
+      1. node_answer_output
+
+         Selected when state["answer"] contains text. This covers greetings, clarification requests, and direct responses that need no legal evidence.
+
+      2. node_odrl_extraction
+
+         Selected for either:
+          - task_type == "odrl_processing"; or
+          - policy compliance with requested_outputs["odrl_analysis"] == True.
+
+      3. node_policy_understanding
+
+         Selected for policy_compliance when ODRL analysis was not requested.
+
+      4. node_hybrid_query
+
+         The default for ordinary legal questions or an unknown task label.
+
+
     """
     if state.get("answer"):
         return "node_answer_output"
-    if state.get("task_type") in {"odrl_processing", "policy_compliance"}:
+    if state.get("task_type") == "odrl_processing":
         return "node_odrl_extraction"
+    if state.get("task_type") == "policy_compliance":
+        if state.get("requested_outputs", {}).get("odrl_analysis", False):
+            return "node_odrl_extraction"
+        return "node_policy_understanding"
     return "node_hybrid_query"
 
 
-def route_after_odrl_serialization(state: QueryGraphState) -> str:
-    """Route serialized ODRL to output or downstream compliance analysis."""
+def route_after_odrl_processing(state: QueryGraphState) -> str:
+    """Continue a combined request to compliance; otherwise show ODRL."""
     if state.get("task_type") == "policy_compliance":
         return "node_policy_understanding"
-    return "node_odrl_processing"
+    return "node_odrl_output"
 
 
 def route_after_search_strategy(
@@ -294,6 +326,7 @@ def build_query_workflow(
         {
             "node_answer_output": "node_answer_output",
             "node_odrl_extraction": "node_odrl_extraction",
+            "node_policy_understanding": "node_policy_understanding",
             "node_hybrid_query": "node_hybrid_query",
         },
     )
@@ -301,15 +334,15 @@ def build_query_workflow(
     # ODRL analysis always includes a machine-readable W3C ODRL JSON-LD
     # document, so extraction cannot bypass serialization.
     workflow.add_edge("node_odrl_extraction", "node_odrl_serialization")
+    workflow.add_edge("node_odrl_serialization", "node_odrl_processing")
     workflow.add_conditional_edges(
-        "node_odrl_serialization",
-        route_after_odrl_serialization,
+        "node_odrl_processing",
+        route_after_odrl_processing,
         {
             "node_policy_understanding": "node_policy_understanding",
-            "node_odrl_processing": "node_odrl_processing",
+            "node_odrl_output": "node_odrl_output",
         },
     )
-    workflow.add_edge("node_odrl_processing", "node_odrl_output")
     workflow.add_edge("node_odrl_output", END)
 
     # Compliance processing enriches extracted rules with policy context, then
@@ -392,12 +425,13 @@ async def _manual_test() -> None:
             # "May a news article be quoted in part when the publisher and "
             # "author are acknowledged?"
 
-            # "compliance the policy : The document may be downloaded once and retained for 30 days for academic research only."
-            # "Also, do ODRL analysis if possible"
+            "Compliance the following policy and also do ODRL analysis if possible: The document may be downloaded once and retained for 30 days for academic research only."
+
+            #
             # {'intent': 'legal_retrieval', 'task_type': 'policy_compliance',
             #  'requested_outputs': {'odrl_analysis': True, 'odrl_jsonld_document': True, 'compliance_assessment': True}
 
-            "Extract ODRL rules from the policy: The document may be downloaded once and retained for 30 days for academic research only."
+            # "Extract ODRL rules from the policy: The document may be downloaded once and retained for 30 days for academic research only."
         ),
         search_type="hybrid_search",
         is_stream=False,
@@ -443,5 +477,5 @@ async def _manual_test() -> None:
 
 
 if __name__ == "__main__":
-    draw_mermaid_png(query_app, "main_query_workflow3")
+    draw_mermaid_png(query_app, "main_query_workflow4")
     asyncio.run(_manual_test())

@@ -865,11 +865,13 @@ def _assign_policy_rule_ids(
 async def node_policy_understanding(
     state: QueryGraphState,
 ) -> dict[str, Any]:
-    """Publish validated policy context after the shared ODRL extraction node.
+    """Prepare grounded policy rules and context for compliance retrieval.
 
-    ODRL rule extraction is deliberately owned by ``node_odrl_extraction``.
-    This node consumes its canonical ``odrl_state`` and prepares only the
-    broader policy context required by compliance retrieval and assessment.
+    For a combined compliance-and-ODRL request, this node reuses the canonical
+    rules and context already produced by ``node_odrl_extraction``. For a
+    compliance-only request, it performs one independent policy-understanding
+    call and avoids the ODRL endpoint, reconciliation, serialization, and
+    engine-validation pipeline.
     """
 
     function_name = sys._getframe().f_code.co_name
@@ -883,44 +885,78 @@ async def node_policy_understanding(
     if not policy_text:
         raise ValueError("node_policy_understanding requires policy text.")
 
-    odrl_state = state.get("odrl_state") or {}
-
-    rules = list(odrl_state.get("validated_policy_rules") or [])
-
-    if not rules and state.get("validated_policy_rules"):
-        rules = list(state["validated_policy_rules"])
-
-    if not odrl_state or not odrl_state.get("source_text"):
-        raise ValueError(
-            "node_policy_understanding must run after node_odrl_extraction."
-        )
-
     add_running_task(session_id, function_name, is_stream)
-
+    odrl_state = state.get("odrl_state") or {}
+    reuse_odrl_state = bool(odrl_state.get("source_text"))
     logger.info(
         f">>> [{function_name}] started: session_id={session_id}, "
-        f"validated_rules={len(rules)}"
+        f"reuse_odrl_state={reuse_odrl_state}"
     )
 
-    raw_context = normalize_policy_context(
-        odrl_state.get("extracted_policy_context")
-    )
+    try:
+        if reuse_odrl_state:
+            rules = list(odrl_state.get("validated_policy_rules") or [])
+            if not rules and state.get("validated_policy_rules"):
+                rules = list(state["validated_policy_rules"])
+            raw_context = normalize_policy_context(
+                odrl_state.get("extracted_policy_context")
+            )
+            extraction_errors = list(
+                odrl_state.get("extraction_errors") or []
+            )
+        else:
+            extraction = await extract_policy_independently_with_ai(
+                policy_text
+            )
+            extracted_rules = normalize_policy_rules(
+                extraction.get("rules", [])
+            )
+            source_issues = _rule_source_issues(
+                extracted_rules,
+                policy_text,
+                "policy_understanding",
+            )
+            grounded_rules = _source_grounded_rules(
+                extracted_rules,
+                policy_text,
+            )
+            rules = _assign_policy_rule_ids(
+                grounded_rules,
+                "independent_ai_policy_understanding",
+            )
+            raw_context = normalize_policy_context(
+                extraction.get("policy_context")
+            )
+            extraction_errors = source_issues
 
-    policy_context, context_warnings = validate_policy_context_evidence(
-        raw_context,
-        policy_text,
-    )
-    extraction_errors = list(odrl_state.get("extraction_errors") or [])
-    all_errors = [*extraction_errors, *context_warnings]
-
-    add_done_task(session_id, function_name, is_stream)
-    logger.info(
-        f">>> [{function_name}] finished: session_id={session_id}, "
-        f"context_warnings={len(context_warnings)}"
-    )
-    return {
-        "policy_text": policy_text,
-        "policy_context": policy_context,
-        "validated_policy_rules": rules,
-        "policy_understanding_errors": all_errors,
-    }
+        policy_context, context_warnings = validate_policy_context_evidence(
+            raw_context,
+            policy_text,
+        )
+        all_errors = [*extraction_errors, *context_warnings]
+        logger.info(
+            f">>> [{function_name}] finished: session_id={session_id}, "
+            f"validated_rules={len(rules)}, "
+            f"context_warnings={len(context_warnings)}"
+        )
+        return {
+            "policy_text": policy_text,
+            "policy_context": policy_context,
+            "validated_policy_rules": rules,
+            "policy_understanding_errors": all_errors,
+        }
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        logger.exception(
+            f">>> [{function_name}] failed: session_id={session_id}"
+        )
+        # Compliance retrieval can still use the original policy text through
+        # node_compliance_retrieval_plan's general-policy fallback.
+        return {
+            "policy_text": policy_text,
+            "policy_context": normalize_policy_context({}),
+            "validated_policy_rules": [],
+            "policy_understanding_errors": [error],
+        }
+    finally:
+        add_done_task(session_id, function_name, is_stream)

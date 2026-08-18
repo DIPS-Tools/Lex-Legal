@@ -5,7 +5,7 @@ from typing_extensions import TypedDict
 
 
 class RequestedOutputs(TypedDict):
-    """Presentation and processing outputs requested by the user."""
+    """User-visible outputs; ODRL analysis always includes JSON-LD."""
 
     odrl_analysis: bool
     odrl_jsonld_document: bool

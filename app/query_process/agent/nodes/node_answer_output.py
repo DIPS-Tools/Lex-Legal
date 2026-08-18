@@ -336,15 +336,24 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
         # Step 4: Publish the answer through the configured non-streaming or
         # SSE channel. Generated streaming deltas are not sent a second time.
         odrl_state = state.get("odrl_state") or {}
-        raw_policy_rules = odrl_state.get("validated_policy_rules")
-        if not raw_policy_rules and state.get("validated_policy_rules"):
+        odrl_requested = bool(
+            state.get("requested_outputs", {}).get("odrl_analysis", False)
+        )
+        raw_policy_rules = (
+            odrl_state.get("validated_policy_rules") if odrl_requested else []
+        )
+        if odrl_requested and not raw_policy_rules:
             raw_policy_rules = state.get("validated_policy_rules", [])
-        validated_policy_rules = [
+        published_odrl_rules = [
             dict(rule)
             for rule in raw_policy_rules
             if isinstance(rule, dict)
         ]
-        odrl_jsonld_document = odrl_state.get("odrl_jsonld_document")
+        odrl_jsonld_document = (
+            odrl_state.get("odrl_jsonld_document")
+            if odrl_requested
+            else None
+        )
         if is_stream and not answer_was_streamed:
             push_to_session(session_id, SSEEvent.DELTA, {"delta": answer})
         if not is_stream:
@@ -352,7 +361,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
             set_task_result(
                 session_id,
                 "validated_policy_rules",
-                validated_policy_rules,
+                published_odrl_rules,
             )
             set_task_result(
                 session_id,
@@ -371,7 +380,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
                     "answer": answer,
                     "status": "completed",
                     "image_urls": image_urls,
-                    "validated_policy_rules": validated_policy_rules,
+                    "validated_policy_rules": published_odrl_rules,
                     "odrl_jsonld_document": odrl_jsonld_document,
                 },
             )
@@ -389,7 +398,7 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
             ),
             query_key_terms=state.get("query_key_terms", []),
             image_urls=image_urls,
-            validated_policy_rules=validated_policy_rules,
+            validated_policy_rules=published_odrl_rules,
             odrl_jsonld_document=(
                 odrl_jsonld_document
                 if isinstance(odrl_jsonld_document, dict)
@@ -406,7 +415,11 @@ async def node_answer_output(state: QueryGraphState) -> dict[str, Any]:
         return {
             "answer": answer,
             "image_urls": image_urls,
-            "validated_policy_rules": validated_policy_rules,
+            # Keep the internal compliance rules in graph state. Only
+            # published_odrl_rules is exposed as ODRL analysis above.
+            "validated_policy_rules": state.get(
+                "validated_policy_rules", []
+            ),
             "odrl_state": odrl_state,
         }
     except Exception:

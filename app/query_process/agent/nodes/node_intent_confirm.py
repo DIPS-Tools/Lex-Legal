@@ -246,18 +246,23 @@ def _normalize_intent_analysis(
     }:
         task_type = raw_task_type  # type: ignore[assignment]
 
+    raw_requested_outputs = raw_result.get("requested_outputs")
+    if not isinstance(raw_requested_outputs, dict):
+        raw_requested_outputs = {}
+
+    # ODRL analysis is an explicit processing/output request. A compliance
+    # assessment does not imply ODRL processing by itself. Once ODRL analysis
+    # is selected, however, W3C ODRL JSON-LD serialization is mandatory.
+    odrl_analysis_requested = task_type == "odrl_processing" or (
+        task_type == "policy_compliance"
+        and bool(
+            raw_requested_outputs.get("odrl_analysis")
+            or raw_requested_outputs.get("odrl_jsonld_document")
+        )
+    )
     requested_outputs: RequestedOutputs = {
-        "odrl_analysis": task_type in {
-            "odrl_processing",
-            "policy_compliance",
-        },
-        # Every ODRL analysis now includes a machine-readable W3C ODRL
-        # document. Enforce the relationship here even if the model returns
-        # inconsistent requested_outputs.
-        "odrl_jsonld_document": task_type in {
-            "odrl_processing",
-            "policy_compliance",
-        },
+        "odrl_analysis": odrl_analysis_requested,
+        "odrl_jsonld_document": odrl_analysis_requested,
         "compliance_assessment": task_type == "policy_compliance",
     }
     policy_text = str(raw_result.get("policy_text") or "").strip()
