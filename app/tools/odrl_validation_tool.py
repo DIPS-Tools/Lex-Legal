@@ -10,8 +10,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, TypedDict
-from urllib.parse import urlsplit, urlunsplit
-
 import requests
 from dotenv import load_dotenv
 
@@ -19,10 +17,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DEFAULT_ODRL_VALIDATOR_ENDPOINT = (
-    "http://odrl-engine/api/validate_odrl_policy"
+    "http://odrl-engine/api/validate_ODRL"
 )
 DEFAULT_HOST_TEST_ENDPOINT = (
-    "http://10.22.12.250:8031/api/validate_odrl_policy"
+    "http://10.22.12.250:8031/api/validate_ODRL"
 )
 DEFAULT_ODRL_VALIDATOR_TIMEOUT_SECONDS = 60.0
 DEFAULT_ODRL_VALIDATOR_MAX_RETRIES = 2
@@ -62,6 +60,7 @@ DEFAULT_TEST_POLICY: dict[str, Any] = {
 class ODRLValidationResult(TypedDict):
     valid: bool
     diagnostic_report: str
+    engine_result: dict[str, Any]
 
 
 class ODRLValidationError(RuntimeError):
@@ -69,27 +68,13 @@ class ODRLValidationError(RuntimeError):
 
 
 def _normalise_endpoint_url(value: str | None) -> str:
-    """Return a complete ODRL validation endpoint URL."""
+    """Return the configured ODRL validation endpoint URL."""
     endpoint = str(value or DEFAULT_ODRL_VALIDATOR_ENDPOINT).strip()
     if not endpoint:
         endpoint = DEFAULT_ODRL_VALIDATOR_ENDPOINT
     if "://" not in endpoint:
         endpoint = f"http://{endpoint}"
-
-    parsed = urlsplit(endpoint)
-    netloc = parsed.netloc
-    path = parsed.path.rstrip("/")
-
-    # The Compose service exposes Nginx on port 80 and proxies FastAPI under
-    # /api/. Accept a direct-style URL and convert it to the working address.
-    if parsed.hostname == "odrl-engine" and parsed.port == 8083:
-        netloc = "odrl-engine"
-    if path == "/validate_odrl_policy":
-        path = f"/api{path}"
-    if not path or path == "/":
-        path = "/api/validate_odrl_policy"
-
-    return urlunsplit((parsed.scheme, netloc, path, parsed.query, ""))
+    return endpoint.rstrip("/")
 
 
 def get_odrl_validator_endpoint(endpoint: str | None = None) -> str:
@@ -103,39 +88,94 @@ def get_odrl_validator_endpoint(endpoint: str | None = None) -> str:
 
 
 def _validate_response(payload: Any) -> ODRLValidationResult:
-    """Validate the public response contract from the ODRL Engine."""
+    """Normalize the new structured ODRL Engine response for graph callers."""
     if not isinstance(payload, dict):
         raise ODRLValidationError(
             "ODRL validator response must be a JSON object."
         )
-    valid = payload.get("valid")
-    report = payload.get("diagnostic_report")
-    if not isinstance(valid, bool):
+    engine_result = payload.get("result")
+    if not isinstance(engine_result, dict):
         raise ODRLValidationError(
-            "ODRL validator response field 'valid' must be a boolean."
+            "ODRL validator response field 'result' must be an object."
         )
-    if not isinstance(report, str):
+
+    is_valid_rdf = engine_result.get("is_valid_RDF")
+    if not isinstance(is_valid_rdf, bool):
         raise ODRLValidationError(
-            "ODRL validator response field 'diagnostic_report' must be a string."
+            "ODRL validator result field 'is_valid_RDF' must be a boolean."
         )
-    return {"valid": valid, "diagnostic_report": report}
+    is_valid_odrl = engine_result.get("is_valid_ODRL", False)
+    if not isinstance(is_valid_odrl, bool):
+        raise ODRLValidationError(
+            "ODRL validator result field 'is_valid_ODRL' must be a boolean."
+        )
+
+    return {
+        "valid": is_valid_rdf and is_valid_odrl,
+        "diagnostic_report": _format_diagnostic_report(engine_result),
+        "engine_result": dict(engine_result),
+    }
 
 
-def validate_odrl_policy(
+def _string_list(value: Any) -> list[str]:
+    """Return readable entries from an engine errors/warnings/info field."""
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _format_diagnostic_report(engine_result: dict[str, Any]) -> str:
+    """Build the legacy readable report while retaining structured data."""
+    lines = [
+        f"RDF valid: {engine_result.get('is_valid_RDF') is True}",
+        f"ODRL valid: {engine_result.get('is_valid_ODRL') is True}",
+    ]
+    file_format = str(engine_result.get("file_format") or "").strip()
+    if file_format:
+        lines.append(f"Detected RDF format: {file_format}")
+
+    graph_size = engine_result.get("ODRL_graph_size")
+    if isinstance(graph_size, int) and not isinstance(graph_size, bool):
+        lines.append(f"ODRL graph size: {graph_size} RDF triples")
+
+    info = _string_list(engine_result.get("info"))
+    warnings = _string_list(engine_result.get("warnings"))
+    errors = _string_list(engine_result.get("errors"))
+    if info:
+        lines.extend(["Information:", *(f"- {item}" for item in info)])
+    if warnings:
+        lines.extend(["Warnings:", *(f"- {item}" for item in warnings)])
+    if errors:
+        lines.extend(["Errors:", *(f"- {item}" for item in errors)])
+
+    stats_text = str(engine_result.get("odrl_stats_text") or "").strip()
+    if stats_text:
+        lines.append(stats_text)
+    shacl_report = str(
+        engine_result.get("shacl_validation_report") or ""
+    ).strip()
+    if shacl_report:
+        lines.extend(["SHACL validation report:", shacl_report])
+    return "\n".join(lines)
+
+
+def validate_odrl(
     policy: dict[str, Any] | str,
     *,
     endpoint: str | None = None,
     timeout_seconds: float | None = None,
     max_retries: int | None = None,
 ) -> ODRLValidationResult:
-    """Validate a JSON-LD object or RDF policy string through ODRL Engine."""
+    """Validate a JSON-LD object or serialized RDF string through ODRL Engine."""
     if isinstance(policy, dict):
         if not policy:
             raise ValueError("ODRL validation requires a non-empty policy.")
-        policy_payload: dict[str, Any] | str = policy
+        # convert the dict to string
+        odrl_string = json.dumps(policy, ensure_ascii=False)
     elif isinstance(policy, str):
-        policy_payload = policy.strip()
-        if not policy_payload:
+
+        odrl_string = policy.strip()
+        if not odrl_string:
             raise ValueError("ODRL validation requires a non-empty policy.")
     else:
         raise TypeError("ODRL policy must be a JSON object or RDF string.")
@@ -167,7 +207,7 @@ def validate_odrl_policy(
         try:
             response = requests.post(
                 endpoint_url,
-                json={"policy": policy_payload},
+                json={"odrl": odrl_string},
                 timeout=timeout,
             )
             response.raise_for_status()
@@ -186,13 +226,17 @@ def validate_odrl_policy(
         f"{last_error}"
     ) from last_error
 
-# first processing functins, avalidate_odrl_policy
-async def avalidate_odrl_policy(
+async def avalidate_odrl(
     policy: dict[str, Any] | str,
     **kwargs: Any,
 ) -> ODRLValidationResult:
     """Run validation in a worker thread without blocking an async event loop."""
-    return await asyncio.to_thread(validate_odrl_policy, policy, **kwargs)
+    return await asyncio.to_thread(validate_odrl, policy, **kwargs)
+
+
+# Compatibility aliases for callers using the previous client function names.
+validate_odrl_policy = validate_odrl
+avalidate_odrl_policy = avalidate_odrl
 
 
 def test_odrl_validation_endpoint(
@@ -203,7 +247,7 @@ def test_odrl_validation_endpoint(
     max_retries: int = 0,
 ) -> ODRLValidationResult:
     """Run one real endpoint smoke test and return its validated response."""
-    return validate_odrl_policy(
+    return validate_odrl(
         policy,
         endpoint=endpoint,
         timeout_seconds=timeout_seconds,

@@ -13,7 +13,7 @@ from app.core.logger import logger
 from app.llm.llm_utils import get_llm_client
 from app.prompt.load_prompt import load_prompt
 from app.query_process.agent.state import ODRLState, QueryGraphState
-from app.tools.odrl_validation_tool import avalidate_odrl_policy
+from app.tools.odrl_validation_tool import avalidate_odrl
 from app.utils.task_utils import add_done_task, add_running_task
 
 
@@ -99,9 +99,10 @@ async def node_odrl_processing(state: QueryGraphState) -> dict[str, Any]:
     add_running_task(session_id, function_name, is_stream)
 
     try:
-        # one of processing functions, avalidate_odrl_policy
-        #   - validate_odrl_policy() performs authoritative, more comprehensive ODRL/RDF/SHACL validation through the external ODRL Engine.
-        initial_result = await avalidate_odrl_policy(document)
+        # The external engine parses serialized RDF and performs ODRL SHACL
+        # validation. The client preserves both a stable compatibility summary
+        # and the engine's complete structured result.
+        initial_result = await avalidate_odrl(document)
         current.update(
             initial_validation_result=dict(initial_result),
             validation_result=dict(initial_result),
@@ -127,7 +128,7 @@ async def node_odrl_processing(state: QueryGraphState) -> dict[str, Any]:
                 initial_result["diagnostic_report"],
                 source_text=str(current.get("source_text") or ""),
             )
-            repaired_result = await avalidate_odrl_policy(repaired)
+            repaired_result = await avalidate_odrl(repaired)
             current["validation_result"] = dict(repaired_result)
             if repaired_result["valid"]:
                 current.update(

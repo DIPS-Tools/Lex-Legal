@@ -321,7 +321,7 @@ def validate_serialized_odrl_structure(
 
       - validate_serialized_odrl_structure() checks the limited document format produced by our serializer.
             It is fast, local, and does not require the ODRL Engine service.
-      - validate_odrl_policy() performs authoritative, more comprehensive ODRL/RDF/SHACL validation through the external ODRL Engine.
+      - validate_odrl() performs authoritative, more comprehensive ODRL/RDF/SHACL validation through the external ODRL Engine.
 
       So it is not intended to replace ODRL Engine validation. It catches implementation and serialization problems early—for example, a missing target or unsupported action—while the engine checks broader standards compliance.
 
