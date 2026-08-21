@@ -30,6 +30,8 @@ Rules:
 - Use only "permission", "obligation", "prohibition", or an empty string for rule_type.
 - Normalize actions to concise verb phrases without modal verbs.
 - Do not discard a supported assignee, asset, constraint, or purpose merely because the two extractors format it differently.
+- For coordinated clauses, source_text must remain the smallest exact substring from the authoritative policy. A shared actor may be inherited into assignee but must not be inserted into source_text unless it is repeated in the source.
+- For an attribution duty, keep the governed resource in asset and put the party receiving attribution in attributed_party.
 - Attach "once" to download and "30 days" to retention when those limits are expressed by the policy; do not move a constraint to a different action.
 - Keep unsupported fields empty; never invent missing actors, assets, constraints, or purposes.
 - source_text must be an exact quotation from the policy.
@@ -43,6 +45,7 @@ Return exactly:
       "assignee": "",
       "action": "",
       "asset": "",
+      "attributed_party": "",
       "rule_type": "",
       "constraint": "",
       "purpose": ""

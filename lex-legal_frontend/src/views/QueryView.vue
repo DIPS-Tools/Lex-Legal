@@ -32,6 +32,7 @@ interface ODRLRule {
   assignee?: string
   action?: string
   asset?: string
+  attributed_party?: string
   rule_type?: string
   constraint?: string
   purpose?: string

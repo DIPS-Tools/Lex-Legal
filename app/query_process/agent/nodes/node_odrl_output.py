@@ -46,7 +46,11 @@ def _build_odrl_answer(
     noun = "rule" if len(rules) == 1 else "rules"
     answer = f"Extracted {len(rules)} validated ODRL-style policy {noun}."
     if status == "generated":
-        answer = f"{answer} A formal ODRL JSON-LD document was also generated."
+        answer = (
+            f"{answer} A formal ODRL JSON-LD document was also generated. "
+            "Formal serialization completed without reporting an unmapped "
+            "component."
+        )
     if status in {"not_implemented", "validation_failed"}:
         detail = errors[0] if errors else "Formal serialization is unavailable."
         return f"{answer}\n\nODRL JSON-LD note: {detail}"

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -107,8 +108,15 @@ def load_odrl_vocabulary(
 
     required = {
         "actions": {"use", "read", "reproduce", "archive"},
-        "left_operands": {"count", "elapsedTime", "purpose"},
-        "operators": {"eq", "lteq", "gteq"},
+        "left_operands": {
+            "count",
+            "dateTime",
+            "elapsedTime",
+            "event",
+            "purpose",
+            "recipient",
+        },
+        "operators": {"eq", "lt", "lteq", "gt", "gteq"},
     }
     for group, required_terms in required.items():
         missing = required_terms - terms[group]
@@ -223,6 +231,100 @@ def _count_constraint(text: str) -> dict[str, Any] | None:
     }
 
 
+def _absolute_date_constraint(text: str) -> dict[str, Any] | None:
+    """Map a calendar deadline to the ODRL dateTime left operand."""
+    date_value: str | None = None
+    patterns = (
+        (r"\b\d{4}-\d{2}-\d{2}\b", ("%Y-%m-%d",)),
+        (
+            r"\b\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4}\b",
+            ("%d %B %Y", "%d %b %Y"),
+        ),
+        (
+            r"\b[A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?[,]?\s+\d{4}\b",
+            ("%B %d %Y", "%b %d %Y"),
+        ),
+    )
+    for pattern, formats in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        candidate = re.sub(
+            r"(?<=\d)(?:st|nd|rd|th)\b|,",
+            "",
+            match.group(0),
+            flags=re.IGNORECASE,
+        )
+        for date_format in formats:
+            try:
+                date_value = datetime.strptime(
+                    candidate.title(),
+                    date_format,
+                ).date().isoformat()
+                break
+            except ValueError:
+                continue
+        if date_value:
+            break
+    if not date_value:
+        return None
+
+    normalized = text.casefold()
+    if re.search(
+        r"\b(on or after|from|not before|no earlier than)\b",
+        normalized,
+    ):
+        operator = "gteq"
+    elif re.search(
+        r"\b(until|through|by|on or before|not after|no later than)\b",
+        normalized,
+    ):
+        operator = "lteq"
+    elif re.search(r"\b(before|earlier than)\b", normalized):
+        operator = "lt"
+    elif re.search(r"\b(after|later than)\b", normalized):
+        operator = "gt"
+    else:
+        operator = "eq"
+    return {
+        "leftOperand": "dateTime",
+        "operator": operator,
+        "rightOperand": _typed_value(date_value, "date"),
+    }
+
+
+def _recipient_constraint(text: str) -> dict[str, Any] | None:
+    """Represent an explicitly named recipient category."""
+    match = re.search(
+        r"\bto\s+(third\s+part(?:y|ies)|external\s+part(?:y|ies))\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    recipient = _clean_text(match.group(1))
+    return {
+        "leftOperand": "recipient",
+        "operator": "eq",
+        "rightOperand": {"@id": _mint_iri("party-category", recipient)},
+    }
+
+
+def _event_constraint(text: str) -> dict[str, Any] | None:
+    """Represent an explicitly identified event governing rule execution."""
+    match = re.search(r"\bwhen\s+(.+)$", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    event = _clean_text(match.group(1)).rstrip(".,;:")
+    if not event:
+        return None
+    return {
+        "leftOperand": "event",
+        "operator": "eq",
+        "rightOperand": {"@id": _mint_iri("event", event)},
+    }
+
+
 def _serialize_constraints(
     constraint: Any,
     purpose: Any,
@@ -234,6 +336,9 @@ def _serialize_constraints(
     if constraint_text:
         count = _count_constraint(constraint_text)
         duration = _duration_constraint(constraint_text)
+        absolute_date = _absolute_date_constraint(constraint_text)
+        recipient = _recipient_constraint(constraint_text)
+        event = _event_constraint(constraint_text)
         if duration and action not in {
             "archive",
             "display",
@@ -247,7 +352,7 @@ def _serialize_constraints(
                 "A duration constraint cannot be mapped safely to "
                 f"elapsedTime for action {action!r}."
             )
-        for item in (count, duration):
+        for item in (count, duration, absolute_date, recipient, event):
             if item and item not in serialized:
                 serialized.append(item)
         if not serialized:
@@ -355,7 +460,12 @@ def validate_serialized_odrl_structure(
                     f"Every {property_name} requires one target IRI."
                 )
 
-            for iri_field in ("uid", "target", "assignee"):
+            for iri_field in (
+                "uid",
+                "target",
+                "assignee",
+                "attributedParty",
+            ):
                 value = rule.get(iri_field)
                 if value is not None and (
                     not isinstance(value, str) or not _is_absolute_iri(value)
@@ -433,6 +543,17 @@ def serialize_odrl_document(
             serialized_rule["target"] = target
         if assignee:
             serialized_rule["assignee"] = assignee
+        attributed_party = _as_iri(
+            "party",
+            source_rule.get("attributed_party"),
+            required=False,
+        )
+        if attributed_party:
+            if action != "attribute":
+                raise ODRLSerializationError(
+                    "attributed_party is supported only for the attribute action."
+                )
+            serialized_rule["attributedParty"] = attributed_party
         constraints = _serialize_constraints(
             source_rule.get("constraint"),
             source_rule.get("purpose"),
@@ -445,3 +566,8 @@ def serialize_odrl_document(
 
     validate_serialized_odrl_structure(document, ontology_path=ontology_path)
     return document
+
+
+# Compatibility name retained for tests and callers created before the local
+# structural validator was renamed.
+validate_odrl_document = validate_serialized_odrl_structure

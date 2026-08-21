@@ -32,6 +32,7 @@ RULE_FIELDS = (
     "assignee",
     "action",
     "asset",
+    "attributed_party",
     "rule_type",
     "constraint",
     "purpose",
@@ -263,6 +264,116 @@ def _source_contains(policy_text: str, evidence: str) -> bool:
     )
 
 
+SOURCE_MODAL_RE = re.compile(
+    r"\b(?:must\s+not|shall\s+not|may\s+not|must|shall|may|can(?:not)?|"
+    r"is\s+required\s+to|is\s+prohibited\s+from)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def repair_rule_source_quotes(
+    rules: list[dict[str, str]],
+    policy_text: str,
+) -> list[dict[str, str]]:
+    """Repair inherited-subject quotations without weakening source checks.
+
+    A reconciliation model may expand a coordinated clause such as
+    ``must not distribute ...`` to ``PartnerCo must not distribute ...`` even
+    though the actor occurs only at the start of the sentence. The expanded
+    text is not an exact quotation. This function safely tries modal-led
+    suffixes and accepts a repair only when that suffix occurs verbatim in the
+    authoritative policy after whitespace normalization.
+    """
+    repaired_rules: list[dict[str, str]] = []
+    for rule in rules:
+        repaired = dict(rule)
+        evidence = _clean_text(repaired.get("source_text"))
+        if _source_contains(policy_text, evidence):
+            repaired_rules.append(repaired)
+            continue
+
+        candidates: list[str] = []
+        for match in SOURCE_MODAL_RE.finditer(evidence):
+            suffix = evidence[match.start():].strip()
+            candidates.extend(
+                [suffix, suffix.rstrip(" ,;:."), f"{suffix.rstrip(' ,;:.')}."],
+            )
+
+        replacement = next(
+            (
+                candidate
+                for candidate in candidates
+                if len(candidate.split()) >= 3
+                and _source_contains(policy_text, candidate)
+            ),
+            "",
+        )
+        if replacement:
+            repaired["source_text"] = replacement
+        repaired_rules.append(repaired)
+    return repaired_rules
+
+
+def enrich_shared_odrl_semantics(
+    rules: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Conservatively recover a shared actor and attribution-party relation."""
+    enriched = [dict(rule) for rule in rules]
+
+    explicit_assignees = {
+        _clean_text(rule.get("assignee"))
+        for rule in enriched
+        if _clean_text(rule.get("assignee"))
+    }
+    shared_assignee = (
+        next(iter(explicit_assignees))
+        if len(explicit_assignees) == 1
+        else ""
+    )
+    if not shared_assignee:
+        for rule in enriched:
+            source = _clean_text(rule.get("source_text"))
+            match = re.match(
+                r"^(.+?)\s+(?:may|must|shall|can)\s+(?!be\b)(?:not\s+)?[A-Za-z]",
+                source,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                actor = _clean_text(match.group(1))
+                if actor and len(actor.split()) <= 8:
+                    shared_assignee = actor
+                    break
+    if shared_assignee:
+        for rule in enriched:
+            if not _clean_text(rule.get("assignee")):
+                rule["assignee"] = shared_assignee
+
+    governed_asset = next(
+        (
+            _clean_text(rule.get("asset"))
+            for rule in enriched
+            if _clean_text(rule.get("asset"))
+            and _comparison_text(rule.get("action")) != "attribute"
+            and rule.get("rule_type") == "permission"
+        ),
+        "",
+    )
+    for rule in enriched:
+        if _comparison_text(rule.get("action")) != "attribute":
+            continue
+        if not _clean_text(rule.get("attributed_party")):
+            match = re.search(
+                r"\battribute\s+([^,.;]+)",
+                _clean_text(rule.get("source_text")),
+                flags=re.IGNORECASE,
+            )
+            if match:
+                rule["attributed_party"] = _clean_text(match.group(1))
+        if governed_asset and _clean_text(rule.get("attributed_party")):
+            rule["asset"] = governed_asset
+    return enriched
+
+
 def validate_policy_context_evidence(
     context: dict[str, Any],
     policy_text: str,
@@ -357,16 +468,20 @@ def _text_similarity(left: Any, right: Any) -> float:
 def _rule_similarity(left: dict[str, str], right: dict[str, str]) -> float:
     """Score rule similarity with extra weight on source and deontic type."""
     weights = {
-        "source_text": 0.30,
-        "rule_type": 0.20,
-        "action": 0.18,
-        "asset": 0.12,
+        "source_text": 0.28,
+        "rule_type": 0.18,
+        "action": 0.17,
+        "asset": 0.11,
         "assignee": 0.08,
-        "constraint": 0.06,
+        "attributed_party": 0.05,
+        "constraint": 0.07,
         "purpose": 0.06,
     }
     return sum(
-        weights[field] * _text_similarity(left[field], right[field])
+        weights[field] * _text_similarity(
+            left.get(field, ""),
+            right.get(field, ""),
+        )
         for field in weights
     )
 
@@ -439,12 +554,13 @@ def compare_policy_extractions(
 
         differences = {
             field: {
-                "odrl": odrl_rule[field],
-                "llm": llm_rule[field],
+                "odrl": odrl_rule.get(field, ""),
+                "llm": llm_rule.get(field, ""),
             }
             for field in RULE_FIELDS
 
-            if _comparison_text(odrl_rule[field]) != _comparison_text(llm_rule[field])
+            if _comparison_text(odrl_rule.get(field, ""))
+            != _comparison_text(llm_rule.get(field, ""))
         }
         matches.append({
             "odrl_index": odrl_index,
@@ -637,7 +753,13 @@ def reconciliation_quality_issues(
             )
 
     source_rules = [*odrl_rules, *llm_rules]
-    for field in ("assignee", "asset", "constraint", "purpose"):
+    for field in (
+        "assignee",
+        "asset",
+        "attributed_party",
+        "constraint",
+        "purpose",
+    ):
         if any(rule.get(field) for rule in source_rules) and not any(
             rule.get(field) for rule in reconciled_rules
         ):
@@ -667,8 +789,13 @@ def enrich_atomic_rules_from_odrl(
                 # These fields normally govern the coordinated clause as a
                 # whole. Constraints and purposes can modify only one action,
                 # so they must remain from the atomic extraction.
-                for field in ("assignee", "asset", "rule_type"):
-                    if not result[field] and candidate[field]:
+                for field in (
+                    "assignee",
+                    "asset",
+                    "attributed_party",
+                    "rule_type",
+                ):
+                    if not result.get(field) and candidate.get(field):
                         result[field] = candidate[field]
         enriched.append(result)
     return enriched

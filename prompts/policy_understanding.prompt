@@ -15,6 +15,8 @@ Rules for policy rules:
 - Use one of "permission", "obligation", or "prohibition" for rule_type. Use an empty string only when the type cannot be determined.
 - Normalize action to a concise verb phrase such as "download", "retain", "delete", or "share". Do not include the modal verb in action.
 - Attach each constraint to the action it modifies.
+- For coordinated clauses, source_text must be the smallest exact substring that appears in the policy. Inherit a shared actor into assignee, but never insert that actor into source_text when it is not repeated there.
+- For an attribution duty, keep the governed resource in asset and put the party receiving attribution in attributed_party.
 - Do not invent an assignee, asset, purpose, constraint, organisation, jurisdiction, or legal role.
 - Empty or absent information must remain an empty string or empty list.
 
@@ -32,6 +34,7 @@ Return only one valid JSON object with exactly this structure:
       "assignee": "",
       "action": "",
       "asset": "",
+      "attributed_party": "",
       "rule_type": "permission",
       "constraint": "",
       "purpose": ""

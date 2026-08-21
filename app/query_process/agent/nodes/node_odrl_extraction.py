@@ -20,9 +20,11 @@ from app.query_process.agent.nodes.node_policy_understanding import (
     _timed_call,
     compare_policy_extractions,
     enrich_atomic_rules_from_odrl,
+    enrich_shared_odrl_semantics,
     extract_policy_independently_with_ai,
     normalize_policy_context,
     normalize_policy_rules,
+    repair_rule_source_quotes,
     reconcile_policy_extractions,
     reconciliation_quality_issues,
     validate_policy_context_evidence,
@@ -91,11 +93,17 @@ async def node_odrl_extraction(
                 f"independent_ai: {type(ai_error).__name__}: {ai_error}"
             )
 
-        endpoint_rules = normalize_policy_rules(
-            (endpoint_result or {"rules": []}).get("rules", [])
+        endpoint_rules = repair_rule_source_quotes(
+            normalize_policy_rules(
+                (endpoint_result or {"rules": []}).get("rules", [])
+            ),
+            policy_text,
         )
-        independent_ai_rules = normalize_policy_rules(
-            (ai_result or {"rules": []}).get("rules", [])
+        independent_ai_rules = repair_rule_source_quotes(
+            normalize_policy_rules(
+                (ai_result or {"rules": []}).get("rules", [])
+            ),
+            policy_text,
         )
         raw_policy_context = normalize_policy_context(
             (ai_result or {}).get("policy_context")
@@ -202,6 +210,11 @@ async def node_odrl_extraction(
             selected_from = "odrl_endpoint"
             reconciliation_method = "odrl_degraded_mode"
 
+        validated_rules = repair_rule_source_quotes(
+            validated_rules,
+            policy_text,
+        )
+        validated_rules = enrich_shared_odrl_semantics(validated_rules)
         final_source_issues = _rule_source_issues(
             validated_rules,
             policy_text,
