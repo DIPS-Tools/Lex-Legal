@@ -425,12 +425,13 @@ async def _manual_test() -> None:
             # "May a news article be quoted in part when the publisher and "
             # "author are acknowledged?"
 
-            "Compliance the following policy and also do ODRL analysis if possible: The document may be downloaded once and retained for 30 days for academic research only."
+            # "Compliance the following policy and also do ODRL analysis if possible: The document may be downloaded once and retained for 30 days for academic research only."
 
             #
             # {'intent': 'legal_retrieval', 'task_type': 'policy_compliance',
             #  'requested_outputs': {'odrl_analysis': True, 'odrl_jsonld_document': True, 'compliance_assessment': True}
 
+            "Just Extract ODRL rules from the policy: The Data Controller shall consult the Data Processor regarding commercial or other confidentiality issues in relation to the Contract."
             # "Extract ODRL rules from the policy: The document may be downloaded once and retained for 30 days for academic research only."
         ),
         search_type="hybrid_search",

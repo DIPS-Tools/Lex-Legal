@@ -31,7 +31,7 @@ from app.query_process.agent.nodes.node_policy_understanding import (
     write_odrl_audit_record,
 )
 from app.query_process.agent.state import ODRLState, QueryGraphState
-from app.tools.oder_extraction_tool import (
+from app.tools.odrl_extraction_tool import (
     aextract_odrl_components,
     get_odrl_endpoint,
 )

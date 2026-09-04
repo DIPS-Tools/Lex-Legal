@@ -40,7 +40,11 @@ ACTION_ALIASES = {
     "accessed": "read",
     "archive": "archive",
     "anonymise": "anonymize",
+    "anonymised": "anonymize",
+    "anonymising": "anonymize",
     "anonymize": "anonymize",
+    "anonymized": "anonymize",
+    "anonymizing": "anonymize",
     "copy": "reproduce",
     "delete": "delete",
     "deleted": "delete",
@@ -50,6 +54,9 @@ ACTION_ALIASES = {
     "execute": "execute",
     "export": "export",
     "modify": "modify",
+    "notify": "inform",
+    "notified": "inform",
+    "notifying": "inform",
     "print": "print",
     "read": "read",
     "retain": "archive",
@@ -389,6 +396,199 @@ def _serialize_constraints(
     return serialized
 
 
+def _permission_duty_action(constraint: Any) -> str | None:
+    """Return the action phrase for a clearly stated permission duty.
+
+    The legacy extraction schema has only one free-text ``constraint`` field,
+    so older extractors place permission duties there. Recognise only explicit
+    duty language; arbitrary unsupported constraints must continue to fail
+    closed in ``_serialize_constraints``.
+    """
+    text = _clean_text(constraint)
+    match = re.search(
+        r"\b(?:subject\s+to|conditional\s+upon)\s+"
+        r"(?:the\s+)?(?:duty|obligation)\s+(?:of|to)\s+(.+)$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    phrase = _clean_text(match.group(1)).rstrip(".,;:")
+    return phrase or None
+
+
+def _is_before_policy_usage(text: Any) -> bool:
+    """Identify an explicit requirement to act before using the permission."""
+    normalized = _clean_text(text).casefold()
+    return bool(
+        re.search(r"\bbeforehand\b", normalized)
+        or re.search(
+            r"\bbefore\s+(?:the\s+)?(?:permitted\s+)?"
+            r"(?:action|use|sharing|distribution)\b",
+            normalized,
+        )
+    )
+
+
+def _failure_mentions_action(text: Any, action: str) -> bool:
+    """Return whether text explicitly describes failure of a known duty."""
+    normalized = _clean_text(text).casefold()
+    if not re.search(r"\b(?:without|fail(?:ed|ing)?\s+to|not)\b", normalized):
+        return False
+    action_patterns = {
+        "anonymize": r"\banonymi[sz](?:e|ed|es|ing|ation)\b",
+    }
+    pattern = action_patterns.get(action, rf"\b{re.escape(action)}\w*\b")
+    return bool(re.search(pattern, normalized))
+
+
+def _informed_party(source_rule: dict[str, Any], action: str) -> str:
+    """Extract the explicit recipient of an ``inform`` consequence."""
+    if action != "inform":
+        return ""
+    supplied = _clean_text(source_rule.get("informed_party"))
+    if supplied:
+        return supplied
+    source_text = _clean_text(source_rule.get("source_text"))
+    match = re.search(
+        r"\b(?:notify|inform)\s+(?:the\s+)?(.+?)(?:[.,;]|$)",
+        source_text,
+        flags=re.IGNORECASE,
+    )
+    return _clean_text(match.group(1)) if match else ""
+
+
+def _serialize_failure_duty(
+    source_rule: dict[str, Any],
+    *,
+    uid: str,
+    inherited_target: str | None,
+    vocabulary: dict[str, frozenset[str]],
+) -> dict[str, Any]:
+    """Serialize a flat remedial rule as a nested consequence Duty."""
+    action = _canonical_action(source_rule.get("action"), vocabulary)
+    duty: dict[str, Any] = {
+        "uid": uid,
+        "action": action,
+    }
+    target = _as_iri(
+        "asset",
+        source_rule.get("asset"),
+        required=False,
+    ) or inherited_target
+    if target:
+        duty["target"] = target
+
+    informed_party = _informed_party(source_rule, action)
+    if action == "inform" and not informed_party:
+        raise ODRLSerializationError(
+            "An inform consequence requires an explicit informed party."
+        )
+    if informed_party:
+        duty["informedParty"] = _as_iri(
+            "party",
+            informed_party,
+            required=True,
+        )
+    return duty
+
+
+def _serialize_permission_duty(
+    duty_phrase: str,
+    consequence_rule: dict[str, Any] | None,
+    *,
+    uid: str,
+    inherited_target: str | None,
+    vocabulary: dict[str, frozenset[str]],
+) -> dict[str, Any]:
+    """Serialize a precondition Duty embedded in a flat permission rule."""
+    action = _canonical_action(duty_phrase, vocabulary)
+    duty: dict[str, Any] = {
+        "uid": uid,
+        "action": action,
+    }
+    if inherited_target:
+        duty["target"] = inherited_target
+    if _is_before_policy_usage(duty_phrase):
+        duty["constraint"] = [{
+            "leftOperand": "event",
+            "operator": "lt",
+            "rightOperand": {"@id": "odrl:policyUsage"},
+        }]
+    if consequence_rule is not None:
+        duty["consequence"] = [
+            _serialize_failure_duty(
+                consequence_rule,
+                uid=f"{uid}:consequence:1",
+                inherited_target=inherited_target,
+                vocabulary=vocabulary,
+            )
+        ]
+    return duty
+
+
+def _permission_duty_plan(
+    rules: list[dict[str, Any]],
+    vocabulary: dict[str, frozenset[str]],
+) -> tuple[dict[int, tuple[str, int | None]], set[int]]:
+    """Match legacy permission-duty text with a following consequence rule."""
+    plan: dict[int, tuple[str, int | None]] = {}
+    consumed_consequences: set[int] = set()
+    for permission_index, rule in enumerate(rules):
+        if _clean_text(rule.get("rule_type")).casefold() != "permission":
+            continue
+        duty_phrase = _permission_duty_action(rule.get("constraint"))
+        if not duty_phrase:
+            continue
+        duty_action = _canonical_action(duty_phrase, vocabulary)
+        consequence_index: int | None = None
+        for candidate_index, candidate in enumerate(rules):
+            if (
+                candidate_index == permission_index
+                or candidate_index in consumed_consequences
+            ):
+                continue
+            if (
+                _clean_text(candidate.get("rule_type")).casefold()
+                != "obligation"
+            ):
+                continue
+            relation_text = " ".join((
+                _clean_text(candidate.get("source_text")),
+                _clean_text(candidate.get("purpose")),
+            ))
+            if not re.search(
+                r"\b(?:if|remed(?:y|ial)|consequence)\b",
+                relation_text,
+                flags=re.IGNORECASE,
+            ):
+                continue
+            permission_assignee = _clean_text(rule.get("assignee")).casefold()
+            candidate_assignee = _clean_text(
+                candidate.get("assignee")
+            ).casefold()
+            if (
+                permission_assignee
+                and candidate_assignee
+                and permission_assignee != candidate_assignee
+            ):
+                continue
+            failure_text = " ".join((
+                _clean_text(candidate.get("constraint")),
+                _clean_text(candidate.get("source_text")),
+            ))
+            if not _failure_mentions_action(failure_text, duty_action):
+                continue
+            # Validate the consequence action before consuming the top-level
+            # rule, so an unsupported action still fails without semantic loss.
+            _canonical_action(candidate.get("action"), vocabulary)
+            consequence_index = candidate_index
+            consumed_consequences.add(candidate_index)
+            break
+        plan[permission_index] = (duty_phrase, consequence_index)
+    return plan, consumed_consequences
+
+
 def _policy_uid(rules: list[dict[str, Any]], supplied_uid: str | None) -> str:
     if supplied_uid:
         if not _is_absolute_iri(supplied_uid):
@@ -420,9 +620,11 @@ def validate_serialized_odrl_structure(
               - Each rule is an object.
               - Actions exist in the loaded ODRL vocabulary.
               - Permissions and prohibitions have a target IRI.
-              - uid, target, and assignee are absolute IRIs.
+              - uid, target, assignee, and supported duty parties are absolute
+                IRIs.
               - Constraints use known left operands and operators.
               - Every constraint has a rightOperand.
+              - Permission duties and duty consequences are recursively valid.
 
       - validate_serialized_odrl_structure() checks the limited document format produced by our serializer.
             It is fast, local, and does not require the ODRL Engine service.
@@ -443,6 +645,86 @@ def validate_serialized_odrl_structure(
     if not isinstance(uid, str) or not _is_absolute_iri(uid):
         raise ODRLSerializationError("ODRL Policy requires one IRI uid.")
 
+    def validate_rule(
+        rule: Any,
+        *,
+        relationship: str,
+        target_required: bool,
+    ) -> None:
+        if not isinstance(rule, dict):
+            raise ODRLSerializationError("Every ODRL rule must be an object.")
+        action = rule.get("action")
+        if action not in vocabulary["actions"]:
+            raise ODRLSerializationError(f"Unknown ODRL action: {action!r}")
+        if target_required and not rule.get("target"):
+            raise ODRLSerializationError(
+                f"Every {relationship} requires one target IRI."
+            )
+
+        for iri_field in (
+            "uid",
+            "target",
+            "assignee",
+            "attributedParty",
+            "informedParty",
+        ):
+            value = rule.get(iri_field)
+            if value is not None and (
+                not isinstance(value, str) or not _is_absolute_iri(value)
+            ):
+                raise ODRLSerializationError(
+                    f"Rule {iri_field} must be an absolute IRI."
+                )
+        constraints = rule.get("constraint", [])
+        if not isinstance(constraints, list):
+            raise ODRLSerializationError("Rule constraint must be a list.")
+        for constraint in constraints:
+            if not isinstance(constraint, dict):
+                raise ODRLSerializationError(
+                    "Every ODRL constraint must be an object."
+                )
+            if constraint.get("leftOperand") not in vocabulary["left_operands"]:
+                raise ODRLSerializationError("Unknown constraint left operand.")
+            if constraint.get("operator") not in vocabulary["operators"]:
+                raise ODRLSerializationError("Unknown constraint operator.")
+            if "rightOperand" not in constraint:
+                raise ODRLSerializationError(
+                    "Constraint requires exactly one rightOperand."
+                )
+
+        if "duty" in rule:
+            duties = rule["duty"]
+            if relationship != "permission" or not isinstance(
+                duties,
+                list,
+            ):
+                raise ODRLSerializationError(
+                    "Only a permission may contain a duty list."
+                )
+            for duty in duties:
+                validate_rule(
+                    duty,
+                    relationship="duty",
+                    target_required=False,
+                )
+
+        if "consequence" in rule:
+            consequences = rule["consequence"]
+            if relationship not in {"duty", "obligation"} or not isinstance(
+                consequences,
+                list,
+            ):
+                raise ODRLSerializationError(
+                    "Only a permission duty or policy obligation may contain "
+                    "a consequence list."
+                )
+            for consequence in consequences:
+                validate_rule(
+                    consequence,
+                    relationship="consequence",
+                    target_required=False,
+                )
+
     rule_count = 0
     for property_name in RULE_TYPE_TO_PROPERTY.values():
         rules = document.get(property_name, [])
@@ -450,38 +732,11 @@ def validate_serialized_odrl_structure(
             raise ODRLSerializationError(f"{property_name} must be a list.")
         rule_count += len(rules)
         for rule in rules:
-            if not isinstance(rule, dict):
-                raise ODRLSerializationError("Every ODRL rule must be an object.")
-            action = rule.get("action")
-            if action not in vocabulary["actions"]:
-                raise ODRLSerializationError(f"Unknown ODRL action: {action!r}")
-            if property_name in {"permission", "prohibition"} and not rule.get("target"):
-                raise ODRLSerializationError(
-                    f"Every {property_name} requires one target IRI."
-                )
-
-            for iri_field in (
-                "uid",
-                "target",
-                "assignee",
-                "attributedParty",
-            ):
-                value = rule.get(iri_field)
-                if value is not None and (
-                    not isinstance(value, str) or not _is_absolute_iri(value)
-                ):
-                    raise ODRLSerializationError(
-                        f"Rule {iri_field} must be an absolute IRI."
-                    )
-            for constraint in rule.get("constraint", []):
-                if constraint.get("leftOperand") not in vocabulary["left_operands"]:
-                    raise ODRLSerializationError("Unknown constraint left operand.")
-                if constraint.get("operator") not in vocabulary["operators"]:
-                    raise ODRLSerializationError("Unknown constraint operator.")
-                if "rightOperand" not in constraint:
-                    raise ODRLSerializationError(
-                        "Constraint requires exactly one rightOperand."
-                    )
+            validate_rule(
+                rule,
+                relationship=property_name,
+                target_required=property_name in {"permission", "prohibition"},
+            )
     if rule_count == 0:
         raise ODRLSerializationError(
             "ODRL Policy requires at least one permission, prohibition, or obligation."
@@ -506,6 +761,10 @@ def serialize_odrl_document(
         raise ODRLSerializationError("Every validated policy rule must be an object.")
 
     vocabulary = load_odrl_vocabulary(str(ontology_path))
+    duty_plan, consumed_consequences = _permission_duty_plan(
+        validated_policy_rules,
+        vocabulary,
+    )
     # add an uid for each policy
     uid = _policy_uid(validated_policy_rules, policy_uid)
 
@@ -515,6 +774,9 @@ def serialize_odrl_document(
         "uid": uid,
     }
     for index, source_rule in enumerate(validated_policy_rules, start=1):
+        source_index = index - 1
+        if source_index in consumed_consequences:
+            continue
         rule_type = _clean_text(source_rule.get("rule_type")).casefold()
         property_name = RULE_TYPE_TO_PROPERTY.get(rule_type)
         if property_name is None:
@@ -554,14 +816,31 @@ def serialize_odrl_document(
                     "attributed_party is supported only for the attribute action."
                 )
             serialized_rule["attributedParty"] = attributed_party
+        duty_spec = duty_plan.get(source_index)
         constraints = _serialize_constraints(
-            source_rule.get("constraint"),
+            "" if duty_spec else source_rule.get("constraint"),
             source_rule.get("purpose"),
             action,
             vocabulary,
         )
         if constraints:
             serialized_rule["constraint"] = constraints
+        if duty_spec:
+            duty_phrase, consequence_index = duty_spec
+            consequence_rule = (
+                validated_policy_rules[consequence_index]
+                if consequence_index is not None
+                else None
+            )
+            serialized_rule["duty"] = [
+                _serialize_permission_duty(
+                    duty_phrase,
+                    consequence_rule,
+                    uid=f"{serialized_rule['uid']}:duty:1",
+                    inherited_target=target,
+                    vocabulary=vocabulary,
+                )
+            ]
         document.setdefault(property_name, []).append(serialized_rule)
 
     validate_serialized_odrl_structure(document, ontology_path=ontology_path)
